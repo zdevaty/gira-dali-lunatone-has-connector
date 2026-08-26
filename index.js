@@ -1,13 +1,16 @@
 import fs from 'node:fs';
-import path from 'node:path';
+import os from 'node:os';
+import { createRequire } from 'node:module';
 import { createDecoder } from './lib/decoder.js';
 import { createAnomalyDetector } from './lib/anomaly.js';
 import { createHaClient } from './lib/ha-client.js';
 import { createController } from './lib/control.js';
 import { createGearDiscovery } from './lib/discover.js';
 import { monotonicNow, createClockWatch } from './lib/clock.js';
+import { createLogStore } from './lib/logstore.js';
 
 const MAX_BACKOFF_MS = 60_000;
+const { version: VERSION } = createRequire(import.meta.url)('./package.json');
 
 function fatal(...lines) {
   for (const line of lines) console.error(line);
@@ -102,7 +105,48 @@ function loadConfig() {
     brightnessGain: Number(process.env.BRIGHTNESS_GAIN) || 1,
     colourGain: Number(process.env.COLOUR_GAIN) || 1,
     minBrightness: Number(process.env.MIN_BRIGHTNESS ?? 3),
+    logFrames: loadChoice('LOG_FRAMES', ['all', 'decoded', 'events', 'alerts'], 'all'),
+    consoleLevel: loadChoice('CONSOLE', ['pretty', 'quiet', 'off'], 'pretty'),
+    logRetentionDays: Number(process.env.LOG_RETENTION_DAYS ?? 30),
+    logMaxMb: Number(process.env.LOG_MAX_MB ?? 512),
+    logMinFreeMb: Number(process.env.LOG_MIN_FREE_MB ?? 256),
   };
+}
+
+function loadChoice(name, allowed, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  const value = String(raw).toLowerCase();
+  if (!allowed.includes(value)) {
+    fatal(`dali-logger: ${name} must be one of ${allowed.join(', ')} -- got "${raw}".`);
+  }
+  return value;
+}
+
+// How much of the bus reaches the capture file. `all` while debugging; the
+// lower settings exist because this now runs on the SD card Home Assistant
+// boots from, and `raw` alone is a third of every capture so far.
+const FRAME_KINDS = new Set([
+  'level', 'colour', 'raw', 'command', 'response', 'orphan_response', 'unknown', 'inputEvent',
+]);
+
+function wantLogged(level, kind) {
+  switch (level) {
+    case 'alerts': return kind === 'alert' || kind === 'connection';
+    case 'events': return !FRAME_KINDS.has(kind) || kind === 'inputEvent';
+    case 'decoded': return kind !== 'raw';
+    default: return true;
+  }
+}
+
+// stdout goes to the add-on log, which is the same SD card. Printing every frame
+// writes the capture twice.
+const CONSOLE_ALWAYS = new Set(['alert', 'connection', 'control', 'preflight', 'discover', 'log']);
+
+function wantPrinted(level, kind) {
+  if (level === 'off') return false;
+  if (level === 'quiet') return CONSOLE_ALWAYS.has(kind);
+  return true;
 }
 
 function targetAbbrev(target) {
@@ -177,6 +221,10 @@ function formatConsoleLine(event) {
       return `${time}  unknown ${event.bits}b ${event.bytes}`;
     case 'connection':
       return `${time}  connection ${event.status}`;
+    case 'startup':
+      return `${time}  start  v${event.version} on ${event.host} (node ${event.node}, ${event.tz}) gateway=${event.gateway} control=${event.control} logs=${event.log_dir} [${event.log_frames}]`;
+    case 'log':
+      return `${time}  logs   ${event.action} ${event.file}${event.reason ? ` (${event.reason})` : ''}`;
     case 'discover': {
       if (event.step === 'device') {
         const detail =
@@ -203,18 +251,16 @@ function formatConsoleLine(event) {
   }
 }
 
-function logFilePath(logDir, isoTs) {
-  const day = isoTs.slice(0, 10);
-  return path.join(logDir, `dali-${day}.jsonl`);
-}
-
-function writeEvent(logDir, event) {
-  fs.appendFileSync(logFilePath(logDir, event.ts), JSON.stringify(event) + '\n');
-}
-
 function main() {
   const config = loadConfig();
-  fs.mkdirSync(config.logDir, { recursive: true });
+
+  const store = createLogStore({
+    dir: config.logDir,
+    retentionDays: config.logRetentionDays,
+    maxBytes: config.logMaxMb * 1024 * 1024,
+    minFreeBytes: config.logMinFreeMb * 1024 * 1024,
+    log: (event) => emit(event),
+  });
 
   const decoder = createDecoder();
   const anomaly = createAnomalyDetector({
@@ -224,10 +270,35 @@ function main() {
 
   function emit(partialEvent, tsMs = Date.now()) {
     const event = { ts: new Date(tsMs).toISOString(), ...partialEvent };
-    console.log(formatConsoleLine(event));
-    writeEvent(config.logDir, event);
+    if (wantPrinted(config.consoleLevel, event.kind)) console.log(formatConsoleLine(event));
+    if (wantLogged(config.logFrames, event.kind)) store.write(event, tsMs);
     return event;
   }
+
+  // The first line of every capture says what wrote it, so a file found weeks
+  // later can be attributed to a build and a machine. Never the token, only that
+  // one is present -- same rule as the preflight.
+  emit({
+    kind: 'startup',
+    version: VERSION,
+    node: process.version,
+    host: os.hostname(),
+    pid: process.pid,
+    tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    gateway: config.gatewayIp,
+    control: config.controlEnabled,
+    ha_url: config.controlEnabled ? config.haUrl : null,
+    ha_token: config.haToken ? `present (${String(config.haToken).length} chars)` : null,
+    log_dir: config.logDir,
+    log_frames: config.logFrames,
+    retention_days: config.logRetentionDays,
+    max_mb: config.logMaxMb,
+  });
+
+  // Housekeeping at startup as well as at midnight: the daemon may have been
+  // down across a rollover, and an oversized capture directory is exactly what
+  // you inherit after a crash loop.
+  store.sweep().catch(() => {});
 
   const ha = config.controlEnabled
     ? createHaClient({ url: config.haUrl, token: config.haToken, log: emit })
