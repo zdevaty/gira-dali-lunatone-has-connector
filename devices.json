@@ -1,0 +1,14 @@
+{
+  "0": {
+    "entity": "light.line_0_dali_00",
+    "min_kelvin": 2700,
+    "max_kelvin": 6500,
+    "gear": null
+  },
+  "1": {
+    "entity": "light.line_0_dali_01",
+    "min_kelvin": 2700,
+    "max_kelvin": 6500,
+    "gear": null
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "dali-bus-logger",
+  "version": "0.1.0",
+  "description": "Read-only DALI bus monitor for a Lunatone DALI-2 IoT Gateway",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

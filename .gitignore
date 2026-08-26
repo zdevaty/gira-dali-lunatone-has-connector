@@ -1,0 +1,13 @@
+# Secrets: the Home Assistant long-lived token lives in the environment only.
+# It must never be committed. If you use a dotenv file, it stays here, untracked.
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Runtime droppings
+*.pid
+*.tmp
