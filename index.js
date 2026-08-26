@@ -5,6 +5,7 @@ import { createAnomalyDetector } from './lib/anomaly.js';
 import { createHaClient } from './lib/ha-client.js';
 import { createController } from './lib/control.js';
 import { createGearDiscovery } from './lib/discover.js';
+import { monotonicNow, createClockWatch } from './lib/clock.js';
 
 const MAX_BACKOFF_MS = 60_000;
 
@@ -244,10 +245,20 @@ function main() {
         brightnessGain: config.brightnessGain,
         colourGain: config.colourGain,
         minBrightness: config.minBrightness,
+        // Every window and throttle in the gesture machine is measured against
+        // this. It must not be the wall clock: this daemon is meant to run on a
+        // Raspberry Pi, which has no RTC and gets its clock stepped by NTP a few
+        // seconds after boot. See lib/clock.js.
+        now: monotonicNow,
       })
     : null;
 
   const schemesSeen = new Set();
+
+  // Says so in the log when the system clock jumps, so that timestamps either
+  // side of the step are not silently compared.
+  const clockWatch = createClockWatch({ log: emit });
+  setInterval(() => clockWatch.check(), 1000).unref();
 
   // Opt-in, because it visibly changes every mapped light for a second or two. It never
   // writes to the bus: each probe is a Home Assistant call, and the bus is only watched.

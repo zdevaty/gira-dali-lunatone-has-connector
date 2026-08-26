@@ -66,7 +66,14 @@ function makeHarness({ deviceMap, kelvin = 4000, brightness = 128, ...options } 
     await settle();
   }
 
-  return { controller, calls, logs, feed, advance, settle, now: () => currentTime };
+  // A clock STEP, as distinct from time passing: the reading changes but no
+  // interval has elapsed, so nothing becomes due. This is what NTP does to a
+  // Raspberry Pi a few seconds after boot, in either direction.
+  function jump(ms) {
+    currentTime += ms;
+  }
+
+  return { controller, calls, logs, feed, advance, settle, jump, now: () => currentTime };
 }
 
 // A device map with the gear address spelled out. There is no default for it, so any
@@ -739,4 +746,61 @@ test('HA errors never propagate out of the controller', async () => {
   await failing.settled();
   await h.settle();
   assert.ok(true, 'no unhandled rejection escaped');
+});
+
+
+// --- Clock steps -----------------------------------------------------------
+// The Pi has no RTC. Every one of these fails if interval logic trusts a clock
+// that can move backwards, and each failure looks like broken hardware rather
+// than a bug: a knob that does nothing, or one that changes colour when you
+// asked for brightness.
+
+test('a backward clock step does not strand the flush timer', async () => {
+  const h = makeHarness();
+  await h.feed([gen('start_right'), abs(100), abs(125)]);
+  assert.equal(brightnessCalls(h.calls).length, 1, 'first step should be sent immediately');
+
+  h.jump(-3_600_000); // NTP sets the clock back an hour
+
+  await h.feed([abs(150)]);
+  assert.equal(
+    brightnessCalls(h.calls).length,
+    2,
+    'the step after the jump must be sent now, not scheduled an hour into the future',
+  );
+});
+
+test('a backward clock step does not hold the colour grace window open', async () => {
+  const h = makeHarness();
+  await h.feed([btn('pressed'), gen('start_right'), abs(100), abs(125)]);
+  assert.equal(colourCalls(h.calls).length, 1, 'held rotation is a colour gesture');
+  await h.feed([btn('long_stop')]);
+
+  h.jump(-3_600_000);
+
+  const before = colourCalls(h.calls).length;
+  await h.feed([gen('start_right'), abs(100), abs(125)]);
+  assert.equal(colourCalls(h.calls).length, before, 'the grace window must have closed');
+  assert.equal(brightnessCalls(h.calls).length, 1, 'the gesture after the step is brightness');
+});
+
+test('a backward clock step attributes no gear correlation', async () => {
+  const learned = (logs) => logs.filter((e) => e.alert === 'gear_mapping_learned');
+
+  const ok = makeHarness({ minCorrelations: 1 });
+  await ok.feed([gen('start_right'), abs(100), abs(125)]);
+  ok.controller.observeLevel('short7', 120);
+  await ok.settle();
+  assert.equal(learned(ok.logs).length, 1, 'a level right after our own call is evidence');
+
+  const stepped = makeHarness({ minCorrelations: 1 });
+  await stepped.feed([gen('start_right'), abs(100), abs(125)]);
+  stepped.jump(-3_600_000);
+  stepped.controller.observeLevel('short7', 120);
+  await stepped.settle();
+  assert.equal(
+    learned(stepped.logs).length,
+    0,
+    'a negative window age proves nothing and must not be treated as a hit',
+  );
 });
