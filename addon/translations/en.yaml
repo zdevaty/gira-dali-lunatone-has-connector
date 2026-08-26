@@ -1,0 +1,39 @@
+configuration:
+  gateway_host:
+    name: Gateway address
+    description: >-
+      IP address or hostname of the Lunatone DALI-2 IoT gateway, for example
+      10.0.0.230. Give it a static DHCP lease: if this address changes the
+      bridge cannot find the bus. The gateway is only ever read from.
+  control_enabled:
+    name: Control the lights
+    description: >-
+      Off: watch and log the bus only, changing nothing. On: turn Gira knob
+      gestures into Home Assistant calls. Leave this off for the first run so
+      you can confirm the bus looks right before anything acts on it.
+  log_frames:
+    name: How much of the bus to capture
+    description: >-
+      all = every frame (use this while debugging). decoded = everything except
+      undecoded raw frames, about a third less. events = only what the bridge
+      did, not the whole bus. alerts = alerts and connection changes only.
+  log_retention_days:
+    name: Keep captures for (days)
+    description: Older captures are deleted. 0 keeps them until the size limit does the work.
+  log_max_mb:
+    name: Capture size limit (MB)
+    description: >-
+      Once the captures exceed this, the oldest are deleted first. Today's is
+      never deleted.
+  log_min_free_mb:
+    name: Stop logging below (MB free)
+    description: >-
+      When the disk gets this tight, frame logging stops and only alerts are
+      written. The bridge keeps working. This protects the disk Home Assistant
+      itself runs on, which matters more than any capture.
+  console:
+    name: Add-on log detail
+    description: >-
+      quiet = alerts and light changes only (recommended: this log is on the
+      same SD card). pretty = every frame. off = nothing.
+network: {}

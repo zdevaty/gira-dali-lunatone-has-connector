@@ -1,0 +1,86 @@
+# Home Assistant add-on manifest.
+#
+# UNTESTED until it has been built on the Pi: there is no Docker on the machine
+# this was written on. Every key below is from the official reference, but the
+# first install is still the real test.
+#
+# Keys marked "Phase 3" stay commented out on purpose. `ingress` without a web
+# server behind it shows a panel that 502s, and `watchdog` pointing at an
+# endpoint that does not exist yet would have the Supervisor restart this add-on
+# every few seconds forever. They are switched on in the same commit as the UI.
+
+name: DALI Bridge
+version: "0.2.0"
+slug: dali_bridge
+description: >-
+  Read-only DALI bus monitor and Gira rotary bridge for a Lunatone DALI-2 IoT
+  gateway. Watches the bus; never transmits on it.
+url: https://github.com/zdenekdevaty/dali-bridge
+stage: experimental
+
+arch:
+  - aarch64
+  - amd64
+
+# node:22-alpine ships no s6, so Docker's own init stays as PID 1: it forwards
+# SIGTERM to node and reaps. The daemon installs its own SIGTERM handler and
+# flushes inside the Supervisor's 10 s stop budget.
+init: true
+
+# Start before Home Assistant. The gateway link does not need HA, and the sooner
+# the bus is being watched the sooner the capture is complete.
+startup: services
+boot: auto
+
+# The Supervisor injects SUPERVISOR_TOKEN and proxies Core at
+# http://supervisor/core. This is the whole reason the primary deployment stores
+# no long-lived access token: there is nothing to store and nothing to expire.
+homeassistant_api: true
+
+# /data is always mapped and persists across restarts, updates and backups.
+# `share` is only here so a capture worth keeping can be exported out of /data.
+map:
+  - type: share
+    read_only: false
+
+# Never take the wall switches down for a backup, and keep hundreds of megabytes
+# of captures out of every snapshot.
+backup: hot
+backup_exclude:
+  - logs/**
+
+environment:
+  LOG_DIR: /data/logs
+  DEVICE_MAP: /data/devices.json
+  # Bounded on purpose: if this leaks it should die and be restarted, not swap
+  # the Pi until Home Assistant suffers with it.
+  NODE_OPTIONS: "--max-old-space-size=128"
+
+# --- Phase 3, with the web UI ---
+# ingress: true
+# ingress_port: 8099
+# ingress_stream: true          # server-sent events must not be buffered
+# panel_icon: mdi:lightbulb-group
+# panel_title: DALI
+# panel_admin: true
+# Reports OUR liveness only. It must never fail because Home Assistant or the
+# gateway is down: restarting us would fix neither and would cost switch time.
+# watchdog: http://[HOST]:[PORT:8099]/api/alive
+
+options:
+  gateway_host: ""
+  control_enabled: false
+  log_frames: all
+  log_retention_days: 30
+  log_max_mb: 512
+  log_min_free_mb: 256
+  console: quiet
+
+schema:
+  gateway_host: str
+  control_enabled: bool
+  log_frames: "list(all|decoded|events|alerts)"
+  log_retention_days: "int(0,3650)"
+  log_max_mb: "int(16,102400)"
+  log_min_free_mb: "int(0,102400)"
+  console: "list(pretty|quiet|off)"

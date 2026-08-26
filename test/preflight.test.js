@@ -124,3 +124,24 @@ test('an unresolvable hostname fails at the DNS step and skips the rest', async 
   assert.equal(failure.step, 'dns');
   assert.equal(calls, 0, 'no HTTP attempted once DNS has already failed');
 });
+
+test('a base URL with a path is preserved, as the Supervisor proxy requires', async () => {
+  // Under the add-on the API is at http://supervisor/core/api. Using the origin
+  // alone would ask http://supervisor/api and report a confident, wrong reason.
+  const asked = [];
+  const h = harness(
+    async (url) => {
+      asked.push(String(url));
+      if (String(url).endsWith('/api/')) return { ok: true, status: 200, json: async () => ({ message: 'API running.' }) };
+      return {
+        ok: true, status: 200,
+        json: async () => ({ state: 'on', attributes: { supported_color_modes: ['color_temp'], min_color_temp_kelvin: 2000, max_color_temp_kelvin: 6535 } }),
+      };
+    },
+    { url: 'http://127.0.0.1:8123/core' },
+  );
+
+  await h.ha.preflight({ 0: { entity: 'light.x', min_kelvin: 2700, max_kelvin: 6500 } });
+  assert.ok(asked.some((u) => u === 'http://127.0.0.1:8123/core/api/'), `asked: ${asked.join(', ')}`);
+  assert.ok(asked.some((u) => u.startsWith('http://127.0.0.1:8123/core/api/states/')), `asked: ${asked.join(', ')}`);
+});

@@ -10,6 +10,7 @@ import { monotonicNow, createClockWatch } from './lib/clock.js';
 import { createLogStore } from './lib/logstore.js';
 import { startWatchdog } from './lib/watchdog.js';
 import { acquireLock } from './lib/lock.js';
+import { applyAddonOptions, applySupervisorEnvironment } from './lib/options.js';
 
 const MAX_BACKOFF_MS = 60_000;
 // How long a link must hold before its backoff is forgiven. A gateway that
@@ -25,19 +26,42 @@ function fatal(...lines) {
 }
 
 function loadDeviceMap(filePath) {
+  // Never fatal, deliberately.
+  //
+  // A fresh install has no device map at all, and a corrupt one leaves every
+  // knob dead either way -- but refusing to start also stops the daemon telling
+  // anyone WHICH addresses need mapping, which is the one thing it can do at
+  // that moment. It logs `unmapped_device` for each knob someone turns, and that
+  // list is how the map gets written in the first place.
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    return { map: {}, problems: [`could not read DEVICE_MAP at ${filePath}: ${err.message}`] };
+  }
+
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    parsed = JSON.parse(raw);
   } catch (err) {
-    fatal(`dali-logger: could not read DEVICE_MAP at ${filePath}: ${err.message}`);
+    return { map: {}, problems: [`DEVICE_MAP at ${filePath} is not valid JSON: ${err.message}`] };
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    fatal(`dali-logger: DEVICE_MAP at ${filePath} must be a JSON object keyed by short address.`);
+    return { map: {}, problems: [`DEVICE_MAP at ${filePath} must be a JSON object keyed by short address`] };
   }
+
   const map = {};
+  const problems = [];
   for (const [address, entry] of Object.entries(parsed)) {
-    if (!entry || typeof entry.entity !== 'string') {
-      fatal(`dali-logger: DEVICE_MAP entry "${address}" is missing an "entity" field.`);
+    // Skip the bad one, keep the rest: one malformed entry disables one knob,
+    // where refusing the whole file disables every knob in the building.
+    if (!/^\d+$/.test(address)) {
+      problems.push(`entry "${address}" is not a short address and was skipped`);
+      continue;
+    }
+    if (!entry || typeof entry.entity !== 'string' || entry.entity === '') {
+      problems.push(`entry "${address}" has no "entity" and was skipped`);
+      continue;
     }
     map[address] = {
       entity: entry.entity,
@@ -49,7 +73,7 @@ function loadDeviceMap(filePath) {
       gear: typeof entry.gear === 'string' ? entry.gear : null,
     };
   }
-  return map;
+  return { map, problems };
 }
 
 // The speed curve is four numbers because the encoder resolves exactly four speeds.
@@ -79,6 +103,7 @@ function loadConfig() {
 
   const controlEnabled = !['false', '0', 'no'].includes(String(process.env.CONTROL_ENABLED ?? 'true').toLowerCase());
   let deviceMap = {};
+  let deviceMapProblems = [];
   if (controlEnabled) {
     if (!process.env.HA_TOKEN) {
       fatal(
@@ -92,7 +117,9 @@ function loadConfig() {
         'Point it at a JSON file mapping control-device short addresses to HA entities.',
       );
     }
-    deviceMap = loadDeviceMap(process.env.DEVICE_MAP);
+    const loaded = loadDeviceMap(process.env.DEVICE_MAP);
+    deviceMap = loaded.map;
+    deviceMapProblems = loaded.problems;
   }
 
   return {
@@ -102,6 +129,7 @@ function loadConfig() {
     cctSpanThreshold: Number(process.env.CCT_SPAN_THRESHOLD) || 40,
     controlEnabled,
     deviceMap,
+    deviceMapProblems,
     haUrl: process.env.HA_URL || 'http://localhost:8123',
     haToken: process.env.HA_TOKEN,
     flushMs: Number(process.env.FLUSH_MS) || 200,
@@ -259,6 +287,10 @@ function formatConsoleLine(event) {
 }
 
 function main() {
+  // Where am I? Both are no-ops anywhere but inside a Home Assistant add-on.
+  const addonOptions = applyAddonOptions();
+  const supervised = applySupervisorEnvironment();
+
   const config = loadConfig();
 
   fs.mkdirSync(config.logDir, { recursive: true });
@@ -304,6 +336,8 @@ function main() {
     tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     gateway: config.gatewayIp,
     control: config.controlEnabled,
+    runtime: supervised ? 'ha-addon' : 'standalone',
+    addon_options: addonOptions ? Object.keys(addonOptions) : null,
     ha_url: config.controlEnabled ? config.haUrl : null,
     ha_token: config.haToken ? `present (${String(config.haToken).length} chars)` : null,
     log_dir: config.logDir,
@@ -311,6 +345,14 @@ function main() {
     retention_days: config.logRetentionDays,
     max_mb: config.logMaxMb,
   });
+
+  // Loud, but not fatal. See loadDeviceMap.
+  for (const problem of config.deviceMapProblems) {
+    emit({
+      kind: 'alert', alert: 'device_map_problem', problem,
+      note: 'the bridge is running; the affected knobs will report unmapped_device when someone turns them',
+    });
+  }
 
   // Housekeeping at startup as well as at midnight: the daemon may have been
   // down across a rollover, and an oversized capture directory is exactly what

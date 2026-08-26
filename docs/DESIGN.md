@@ -478,11 +478,16 @@ re-copy, click Update. `deploy/push.sh` rsyncs from this repo over SSH.
 
 ### 11.2 systemd (fallback)
 
-`Type=notify` with `WatchdogSec=30` (sd_notify implemented in ~20 lines over
-`node:dgram` — no dependency), `Restart=always`, `RestartSec=2`, and
-critically **`StartLimitIntervalSec=0`**: the default start limit gives up
-permanently after five rapid failures, which is the exact opposite of what a
-service behind physical wall switches should do.
+`Type=simple`, `Restart=always`, `RestartSec=2`, and critically
+**`StartLimitIntervalSec=0`**: the default start limit gives up permanently
+after five rapid failures, which is the exact opposite of what a service behind
+physical wall switches should do.
+
+*Revised while building:* this originally specified `Type=notify` with
+`WatchdogSec=30` and an sd_notify implementation. The watchdog worker thread
+(section 4.1) turned out to cover the same failure — a wedged event loop —
+identically under both the Supervisor and systemd, so sd_notify would be a
+second mechanism for one failure and one more thing to get wrong. Dropped.
 
 Hardened with `DynamicUser`/dedicated user, `ProtectSystem=strict`,
 `NoNewPrivileges`, an empty `CapabilityBoundingSet`, `MemoryMax=200M`, and

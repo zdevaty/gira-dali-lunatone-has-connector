@@ -24,7 +24,7 @@ GATEWAY_IP=10.0.0.230 LOG_DIR=./logs \
 ```
 
 ```bash
-npm test   # 94 tests, all offline
+npm test   # 132 tests, all offline
 ```
 
 ## Configuration
@@ -48,6 +48,13 @@ npm test   # 94 tests, all offline
 | `COLOUR_GAIN` | `1.0` | Multiplier on colour deltas. |
 | `CCT_BURST_MIN_SAMPLES` | `8` | Min samples before a narrow-range alert can fire. |
 | `CCT_SPAN_THRESHOLD` | `40` | Mired span below which a burst is "narrow". |
+| `LOG_FRAMES` | `all` | How much of the bus reaches the capture: `all`, `decoded` (no raw frames), `events` (only what the bridge did), `alerts`. |
+| `CONSOLE` | `pretty` | `pretty` = every event, `quiet` = alerts and light changes only, `off` = nothing. |
+| `LOG_RETENTION_DAYS` | `30` | Captures older than this are deleted. `0` = keep until the size cap decides. |
+| `LOG_MAX_MB` | `512` | Total capture size; over it, the oldest go first. Today's is never deleted. |
+| `LOG_MIN_FREE_MB` | `256` | Below this much free disk, stop capturing frames and keep bridging. |
+| `WATCHDOG` | `true` | Worker thread that kills the process if the event loop wedges. |
+| `WATCHDOG_TIMEOUT_MS` | `15000` | How long the event loop may be unresponsive first. |
 
 The daemon refuses to start with a plain error (no stack trace) if `GATEWAY_IP`/`LOG_DIR`
 are missing, or if control is enabled without `HA_TOKEN`/`DEVICE_MAP`.
@@ -373,6 +380,19 @@ Console output is one line per event, meant for `journalctl -f`:
 | `unexpected_event_scheme` | The controller is not using device/instance addressing. Its events carry no device address, so they are logged but cannot control lights. Logged once per scheme. |
 | `ha_unreachable` / `ha_restored` | Start and end of a Home Assistant outage. |
 
+### Alerts added for running unattended
+
+| Alert | Means |
+| --- | --- |
+| `command_dropped` | Home Assistant was not keeping up. Queued commands older than 1.5 s are discarded rather than applied late. |
+| `log_paused_low_disk` / `log_resumed` | Free disk hit the floor. Frame capture stopped; alerts and bridging continue. |
+| `log_write_failed` | The capture stream errored. The next flush opens a fresh handle. |
+| `clock_step` | Wall and monotonic clocks disagreed by more than a second. Timestamps either side are not comparable. |
+| `watchdog_kill` | The event loop stopped responding and the process was killed so the supervisor could restart it. |
+| `frame_handler_failed` | A frame threw. Reported once, then every hundredth; the bridge keeps running. |
+| `device_map_problem` | One `devices.json` entry was skipped. The rest of the map is in force. |
+| `uncaught_exception` / `unhandled_rejection` | Written to the capture just before exiting non-zero. |
+
 ## What the first real capture showed
 
 `logs/dali-2026-08-25.jsonl` is a 2h42m capture from the live installation (3,834 events).
@@ -449,11 +469,31 @@ Confirm it by deliberately saving a colour-temperature limit and checking the al
 ## Layout
 
 ```
-index.js          config, WebSocket + reconnect, logging, console output
-lib/decoder.js    16-bit and 24-bit frame decoding, DT8 colour state machine
-lib/anomaly.js    narrow_cct_range, calibration_saved detection
-lib/control.js    gesture state machine, coalescing, HA call generation
-lib/ha-client.js  Home Assistant REST client, outage tracking
-lib/discover.js   active gear-mapping discovery via HA (never writes to the bus)
-test/             decoder, anomaly and control tests built from real bus captures
+index.js            config, WebSocket + reconnect, wiring, console output
+lib/decoder.js      16-bit and 24-bit frame decoding, DT8 colour state machine
+lib/anomaly.js      narrow_cct_range, calibration_saved detection
+lib/control.js      gesture state machine, coalescing, bounded HA call queue
+lib/ha-client.js    Home Assistant REST client, outage tracking
+lib/discover.js     active gear-mapping discovery via HA (never writes to the bus)
+lib/logstore.js     buffered JSONL capture: rotation, retention, disk floor
+lib/clock.js        monotonic time for intervals; clock-step detection
+lib/watchdog.js     worker thread that kills a wedged process
+lib/lock.js         one instance per machine
+lib/options.js      add-on / Supervisor runtime adapters
+addon/              Home Assistant add-on manifest, Dockerfile, docs
+deploy/             push.sh, and the systemd unit for non-HAOS installs
+docs/DESIGN.md      why it is put together this way, and what was rejected
+test/               built from real bus captures; plus a fake gateway on loopback
 ```
+
+## Running it on the Raspberry Pi
+
+See [docs/DESIGN.md](docs/DESIGN.md). Short version: it becomes a Home Assistant
+add-on, which puts the UI in the HA sidebar behind HA's own login and removes
+the long-lived token entirely (`homeassistant_api: true` gets a scoped one from
+the Supervisor). `addon/` holds the manifest; `deploy/push.sh` copies it to the
+Pi. For a non-HAOS install there is a systemd unit in `deploy/systemd/`.
+
+The daemon is the wall switches now — with the controllers out of
+application-controller mode, nothing else on the bus reacts to the knobs. That
+is what everything in `docs/DESIGN.md` is organised around.

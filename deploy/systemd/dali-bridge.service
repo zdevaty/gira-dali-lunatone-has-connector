@@ -1,0 +1,53 @@
+# Fallback deployment, for a Home Assistant install that is NOT HAOS or
+# Supervised (i.e. HA in a plain Docker container, or Core in a venv), where
+# add-ons do not exist. Same daemon, different wrapper.
+#
+# Install: see deploy/systemd/README.md
+
+[Unit]
+Description=DALI bridge (read-only bus monitor and Gira rotary bridge)
+Documentation=file:/opt/dali-bridge/docs/DESIGN.md
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+# Never give up on this unit. The default start limit stops a service
+# permanently after five rapid failures, which is the exact opposite of what
+# should happen to the thing every wall switch in the building depends on.
+StartLimitIntervalSec=0
+
+[Service]
+# Type=simple, not notify. The daemon carries its own watchdog thread (see
+# lib/watchdog.js), which catches a wedged event loop and kills the process from
+# the inside. That works identically under the Supervisor and under systemd, so
+# an sd_notify implementation would be a second mechanism for the same failure.
+Type=simple
+Restart=always
+RestartSec=2s
+
+ExecStart=/usr/bin/node /opt/dali-bridge/index.js
+WorkingDirectory=/opt/dali-bridge
+EnvironmentFile=/etc/dali-bridge/env
+Environment=NODE_OPTIONS=--max-old-space-size=128
+
+User=dali-bridge
+Group=dali-bridge
+StateDirectory=dali-bridge
+
+# The daemon reads one config file and writes one log directory. Nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target
