@@ -804,3 +804,71 @@ test('a backward clock step attributes no gear correlation', async () => {
     'a negative window age proves nothing and must not be treated as a hit',
   );
 });
+
+// --- A stalled Home Assistant ------------------------------------------------
+// ha-client.js says a brightness change applied five minutes late is worse than
+// none at all. Until the queue below was bounded, that was an aspiration: every
+// call chained onto the last, so a knob turned during a 30 s HA stall queued
+// minutes of writes that landed long after the hand had gone.
+
+function stallableHa() {
+  const calls = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  return {
+    calls,
+    release: () => release(),
+    ha: {
+      getLightKelvin: async () => 4000,
+      getLightBrightness: async () => 128,
+      callService: async (domain, service, body) => {
+        calls.push(body);
+        await gate;
+      },
+    },
+  };
+}
+
+test('a stalled Home Assistant sheds commands rather than queueing them', async () => {
+  const stall = stallableHa();
+  const h = makeHarness({ ha: stall.ha, flushMs: 0, maxQueue: 2 });
+
+  // Six turns of the knob while HA is not answering.
+  await h.feed([gen('start_right'), abs(0), abs(25), abs(50), abs(75), abs(100), abs(125)]);
+
+  const dropped = h.logs.filter((e) => e.alert === 'command_dropped');
+  assert.ok(dropped.length >= 1, 'the shedding is reported, not silent');
+  assert.equal(dropped[0].reason, 'queue_full');
+  assert.equal(dropped.length, 1, 'reported once per run of dropping, not once per call');
+
+  stall.release();
+  await h.settle();
+
+  // One in flight plus at most maxQueue behind it. Without the bound this was
+  // one call per flush, all of them still to come.
+  assert.ok(stall.calls.length <= 3, `sent ${stall.calls.length} calls, expected at most 3`);
+});
+
+test('a command that waited too long is discarded, not applied late', async () => {
+  const stall = stallableHa();
+  const h = makeHarness({ ha: stall.ha, flushMs: 0, staleMs: 1500 });
+
+  await h.feed([gen('start_right'), abs(0), abs(25)]);
+  assert.equal(stall.calls.length, 1, 'the first call is in flight');
+
+  await h.feed([abs(50)]); // queued behind the stalled one
+  h.advance(5000); // ... and Home Assistant stays down for five seconds
+  stall.release();
+  await h.settle();
+
+  assert.equal(stall.calls.length, 1, 'the queued step was five seconds stale and was dropped');
+  const dropped = h.logs.filter((e) => e.alert === 'command_dropped');
+  assert.equal(dropped.at(-1).reason, 'stale');
+});
+
+test('settled() still waits for everything in the queue', async () => {
+  const h = makeHarness({ flushMs: 0 });
+  await h.feed([gen('start_right'), abs(0), abs(25), abs(50)]);
+  await h.controller.settled();
+  assert.ok(brightnessCalls(h.calls).length >= 2, 'nothing was left in flight');
+});

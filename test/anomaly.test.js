@@ -60,3 +60,27 @@ test('calibration_saved: two blinks within the window does not alert', () => {
   const alerts = levels.map((level) => anomaly.onLevel('group0', level, (ts += 500)));
   assert.ok(alerts.every((a) => a === null));
 });
+
+test('a burst that never pauses stays O(1) and keeps its meaning', () => {
+  // The old version kept every sample and spread the array into Math.max, which
+  // throws past roughly 150k arguments. Reaching that takes hours of unbroken
+  // colour traffic -- a fault, but the daemon is meant to run for months.
+  const detector = createAnomalyDetector({ burstMinSamples: 8, spanThreshold: 40 });
+  let ts = 0;
+  let alerts = 0;
+  for (let i = 0; i < 250_000; i++) {
+    ts += 100; // well inside the 2 s burst gap, so this is all one burst
+    // Alternating ends of the range, so the span is 400 from the second sample
+    // on: the detector never latches and keeps re-evaluating the whole burst.
+    if (detector.onColour('short0', i % 2 ? 200 : 600, ts)) alerts++;
+  }
+  assert.equal(alerts, 0, 'a 400-mired span is not a narrow range');
+
+  // And the semantics are unchanged for the case that should alert.
+  const narrow = createAnomalyDetector({ burstMinSamples: 8, spanThreshold: 40 });
+  let alert = null;
+  for (let i = 0; i < 20; i++) alert = narrow.onColour('short1', 300 + (i % 5), i * 100) ?? alert;
+  assert.equal(alert.alert, 'narrow_cct_range');
+  assert.equal(alert.span, 4);
+  assert.equal(alert.samples, 8, 'reported at the sample it fired on, as before');
+});
