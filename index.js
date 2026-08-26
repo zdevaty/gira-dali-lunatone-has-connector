@@ -8,8 +8,15 @@ import { createController } from './lib/control.js';
 import { createGearDiscovery } from './lib/discover.js';
 import { monotonicNow, createClockWatch } from './lib/clock.js';
 import { createLogStore } from './lib/logstore.js';
+import { startWatchdog } from './lib/watchdog.js';
+import { acquireLock } from './lib/lock.js';
 
 const MAX_BACKOFF_MS = 60_000;
+// How long a link must hold before its backoff is forgiven. A gateway that
+// accepts a connection and immediately drops it would otherwise reset the
+// backoff on every attempt and be retried once a second, forever.
+const STABLE_MS = 30_000;
+const SHUTDOWN_BUDGET_MS = 3000;
 const { version: VERSION } = createRequire(import.meta.url)('./package.json');
 
 function fatal(...lines) {
@@ -254,6 +261,16 @@ function formatConsoleLine(event) {
 function main() {
   const config = loadConfig();
 
+  fs.mkdirSync(config.logDir, { recursive: true });
+  const lock = acquireLock(config.logDir);
+  if (!lock.ok) {
+    fatal(
+      `dali-logger: another instance is already running here (pid ${lock.holder?.pid}, started ${lock.holder?.started}).`,
+      'Two bridges on one bus send every gesture to Home Assistant twice, which looks like a tuning fault and is not one.',
+      `If you are sure it is gone, remove ${config.logDir}/.dali-bridge.lock`,
+    );
+  }
+
   const store = createLogStore({
     dir: config.logDir,
     retentionDays: config.logRetentionDays,
@@ -300,6 +317,53 @@ function main() {
   // you inherit after a crash loop.
   store.sweep().catch(() => {});
 
+  const watchdog = startWatchdog({
+    timeoutMs: Number(process.env.WATCHDOG_TIMEOUT_MS ?? 15_000),
+    enabled: !['false', '0', 'no'].includes(String(process.env.WATCHDOG ?? 'true').toLowerCase()),
+    currentFile: () => store.currentFile(),
+  });
+
+  // Crash-only. An unhandled error means the process is in a state nobody
+  // reasoned about, and the supervisor restarts us in about two seconds -- far
+  // less than the time it takes anyone to notice a daemon that is running but
+  // subtly wrong. Write down why first: stdout is block-buffered when it is a
+  // pipe (which it is under both Docker and systemd), so the last console lines
+  // before an exit are routinely lost. The capture file is not.
+  let dying = false;
+  function die(alert, err) {
+    if (dying) process.exit(1);
+    dying = true;
+    try {
+      emit({ kind: 'alert', alert, error: String(err?.stack ?? err?.message ?? err) });
+      store.drainSync();
+      lock.release();
+    } catch {
+      // Nothing useful left to do.
+    }
+    process.exit(1);
+  }
+  process.on('uncaughtException', (err) => die('uncaught_exception', err));
+  process.on('unhandledRejection', (err) => die('unhandled_rejection', err));
+
+  let leaving = false;
+  async function shutdown(signal) {
+    if (leaving) return;
+    leaving = true;
+    emit({ kind: 'connection', status: 'shutdown', signal });
+    watchdog.stop();
+    // Bounded: the Supervisor sends SIGKILL ten seconds after SIGTERM, and a
+    // hung Home Assistant call must not spend that budget.
+    await Promise.race([
+      Promise.all([controller ? controller.settled() : null, store.close()]),
+      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_BUDGET_MS)),
+    ]).catch(() => {});
+    store.drainSync();
+    lock.release();
+    process.exit(0);
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
   const ha = config.controlEnabled
     ? createHaClient({ url: config.haUrl, token: config.haToken, log: emit })
     : null;
@@ -338,7 +402,28 @@ function main() {
       ? createGearDiscovery({ ha, deviceMap: config.deviceMap, log: emit })
       : null;
 
+  // One frame must never be able to take the bridge down. It has happened once
+  // already: a gateway message with `data` as a string threw out of the message
+  // handler and ended the process.
+  let frameErrors = 0;
   function handleFrame(bits, bytes) {
+    try {
+      decodeAndDispatch(bits, bytes);
+    } catch (err) {
+      frameErrors += 1;
+      // Once, then every hundredth: a systematically malformed stream would
+      // otherwise fill the capture with the same stack trace.
+      if (frameErrors === 1 || frameErrors % 100 === 0) {
+        emit({
+          kind: 'alert', alert: 'frame_handler_failed', count: frameErrors,
+          bits, bytes: Array.isArray(bytes) ? bytes.join(' ') : String(bytes),
+          error: String(err?.message ?? err),
+        });
+      }
+    }
+  }
+
+  function decodeAndDispatch(bits, bytes) {
     // One timestamp for both decoding (query/response pairing) and the log line,
     // so the pairing window is measured against what the log actually shows.
     const tsMs = Date.now();
@@ -378,7 +463,9 @@ function main() {
   let discoveryStarted = false;
 
   function connect() {
+    if (leaving) return;
     const ws = new WebSocket(`ws://${config.gatewayIp}`);
+    let stableTimer = null;
     // Node's WebSocket fires only 'error' (no 'close') when the initial handshake
     // fails, but only 'close' (no 'error') when an established connection drops —
     // so both need to trigger reconnect, guarded to fire once per attempt.
@@ -387,14 +474,25 @@ function main() {
     function handleDown() {
       if (down) return;
       down = true;
+      if (stableTimer) clearTimeout(stableTimer);
+      if (leaving) return;
       emit({ kind: 'connection', status: 'disconnected' });
+      // Deliberately NOT unref'd. This is the only thing keeping the process
+      // alive while the gateway is unreachable, and a bridge that quietly exits
+      // because the network was not up yet at boot is the worst of both worlds:
+      // no lights, no logs, and a supervisor restarting it into the same race.
       setTimeout(connect, backoffMs);
       backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     }
 
     ws.addEventListener('open', () => {
-      backoffMs = 1000;
       emit({ kind: 'connection', status: 'connected' });
+      // Forgiven only once the link has proven it can hold. Resetting on `open`
+      // alone turns a flapping gateway into a once-a-second retry loop.
+      stableTimer = setTimeout(() => {
+        backoffMs = 1000;
+      }, STABLE_MS);
+      stableTimer.unref?.();
       // Discovery needs the bus in view to see which gear answers, so it can only start
       // once the gateway is actually connected. Once per run, not on every reconnect.
       if (discovery && !discoveryStarted) {

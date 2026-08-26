@@ -200,3 +200,14 @@ test('the real free-space probe works on this platform', async () => {
   assert.ok(s.bavail * s.bsize > 0, 'statfs reports free space');
   await h.cleanup();
 });
+
+test('drainSync writes the buffer without an event loop turn', async () => {
+  // The crash path: the process is about to stop existing, so a buffered
+  // explanation that needs a tick to reach the disk is not an explanation.
+  const h = await tmpStore({ now: () => at(0) });
+  h.store.write({ kind: 'alert', alert: 'uncaught_exception', error: 'boom' }, at(0));
+  const written = h.store.drainSync();
+  assert.equal(written, 1);
+  assert.equal(JSON.parse(h.read(`dali-${day(0)}.jsonl`)).alert, 'uncaught_exception');
+  await h.cleanup();
+});
