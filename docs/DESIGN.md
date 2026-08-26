@@ -1,7 +1,25 @@
 # DALI bridge on the Raspberry Pi — design
 
-Status: proposed, 26 Aug 2026. Nothing here is built yet; the repo is at
-`v0.1.0-bench`, the bench build that this design moves onto the Pi.
+Status: 26 Aug 2026. Sections 1-11 are the design. **Phase 1 is built and
+tested** (see below); Phase 2 packaging is written but has never been built on
+real hardware. Roll back to the tag `v0.1.0-bench` for the bench build this
+started from.
+
+### Build status
+
+| Phase | State |
+|---|---|
+| 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels. 134 tests, all offline. |
+| 2 — packaging | **Written, unbuilt.** `addon/` and `deploy/` exist; there is no Docker on the machine they were written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
+| 3 — web UI | Not started. |
+| 4 — setup features | Not started. |
+| 5 — cutover | Not started. Blocked on open question 2 below. |
+
+Four latent bugs named in section 4 were found in the bench build and fixed:
+rows 3, 7, 8 and 11. Each was verified by running its new test against the
+previous code and watching it fail. A fifth was introduced and caught by the
+end-to-end test during the work itself — an unref'd reconnect timer that made
+the daemon exit instead of retry when the gateway was unreachable at startup.
 
 ---
 

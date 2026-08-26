@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createFakeGateway } from './helpers/fake-gateway.js';
+import { createFakeHa } from './helpers/fake-ha.js';
 
 // The whole daemon, against a gateway on loopback. Offline like everything else
 // here, but it exercises the parts no unit test reaches: process startup, the
@@ -138,4 +139,75 @@ test('an unreachable gateway is retried, not treated as a reason to exit', async
 
   await waitFor(() => read(dir).filter((e) => e.kind === 'connection' && e.status === 'disconnected').length >= 3);
   assert.equal(child.exitCode, null, 'still running, still trying');
+});
+
+test('a real gesture from the capture reaches Home Assistant', async (t) => {
+  // The bytes below are lifted verbatim from logs/dali-2026-08-26.jsonl: a Gira
+  // knob turned right, three absolute-position reports, then stop. This is the
+  // one assertion that covers the whole chain at once -- gateway frame in,
+  // Home Assistant call out -- through the real decoder and the real gesture
+  // machine, after all the reliability surgery.
+  const gw = createFakeGateway();
+  const ha = createFakeHa({ brightness: 128 });
+  const [gwPort, haPort] = [await gw.listen(), await ha.listen()];
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-e2e-'));
+  fs.writeFileSync(path.join(dir, 'devices.json'), JSON.stringify({
+    0: { entity: 'light.obyvak', min_kelvin: 2700, max_kelvin: 6500, gear: 'short0' },
+  }));
+
+  const child = spawn(process.execPath, ['index.js'], {
+    env: {
+      ...process.env,
+      GATEWAY_IP: `127.0.0.1:${gwPort}`,
+      LOG_DIR: dir,
+      DEVICE_MAP: path.join(dir, 'devices.json'),
+      HA_URL: `http://127.0.0.1:${haPort}`,
+      HA_TOKEN: 'test-token',
+      CONTROL_ENABLED: 'true',
+      CONSOLE: 'off',
+      WATCHDOG: 'false',
+    },
+    stdio: 'ignore',
+  });
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await gw.close();
+    await ha.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  await waitFor(() => read(dir).some((e) => e.kind === 'connection' && e.status === 'connected'));
+
+  const hex = (s) => s.split(' ').map((b) => parseInt(b, 16));
+  gw.send(gw.monitor(24, hex('00 84 00'))); // generic: start_right
+  await new Promise((r) => setTimeout(r, 60));
+  for (const frame of ['00 8C 01', '00 8C 1A', '00 8C 33']) { // absolute: 1, 26, 51
+    gw.send(gw.monitor(24, hex(frame)));
+    await new Promise((r) => setTimeout(r, 220)); // outside the 200 ms flush window
+  }
+  gw.send(gw.monitor(24, hex('00 84 02'))); // generic: stop
+
+  const turnOns = await waitFor(() => {
+    const c = ha.calls.filter((x) => x.service === '/api/services/light/turn_on');
+    return c.length >= 2 ? c : null;
+  });
+
+  assert.ok(turnOns.every((c) => c.entity_id === 'light.obyvak'), 'the mapped entity, and only it');
+  assert.ok(
+    turnOns.every((c) => c.brightness_step === 25),
+    `two 25-count turns should each send one 25-step: ${JSON.stringify(turnOns)}`,
+  );
+
+  // The capture is buffered and flushes every 250 ms, so it can legitimately lag
+  // the HA call that has already gone out. Wait for it rather than racing it.
+  const events = await waitFor(() => {
+    const all = read(dir);
+    return all.some((e) => e.kind === 'inputEvent' && e.value === 51) ? all : null;
+  });
+  assert.ok(events.some((e) => e.kind === 'inputEvent' && e.instanceType === 'generic' && e.event === 'start_right'));
+  assert.ok(events.some((e) => e.kind === 'control' && e.action === 'brightness_step'));
+  assert.ok(
+    !JSON.stringify(events).includes('test-token'),
+    'the token must not appear anywhere in the capture',
+  );
 });
