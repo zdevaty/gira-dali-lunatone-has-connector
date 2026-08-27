@@ -9,11 +9,26 @@ started from.
 
 | Phase | State |
 |---|---|
-| 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection (section 5). 147 tests, all offline. |
-| 2 — packaging | **Written, unbuilt.** The repo root **is** the app (`config.yaml` + `Dockerfile` at top level), so it installs by cloning straight into `/addons`. There is no Docker on the machine it was written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
-| 3 — web UI | Not started. |
-| 4 — setup features | Not started. |
-| 5 — cutover | Not started, no longer blocked: open question 2 is answered, so the Pi can run alongside the bench instance first. |
+| 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection. |
+| 2 — deploy | **Done and running.** Installed as `local_dali_bridge` on the Pi, control enabled, one room mapped and behaving. |
+| 3 — web UI | **Mostly done.** Now, Commission and Health ship in the sidebar panel. Captures and Tuning are not built. |
+| 4 — setup features | **Partly.** Commissioning and the device map are in the UI, applied without a restart. Discovery is not driveable from the page yet, and the optional Home Assistant status sensors are not built. |
+| 5 — cutover | **Done** in the sense that the Pi is the only bridge. **The chaos checklist below has not been run**, so "extremely reliable" remains a design claim rather than a tested property. |
+
+### Found by running it, after deployment
+
+The four in section 4 were found by reading the code. These were found by using
+it, which is the more interesting list:
+
+| What | Why it was not caught earlier |
+|---|---|
+| A remapped address kept the gear measured for its **old** entity, pinning the new light to the old one's level | A line I wrote in `setDeviceMap` with a comment confidently explaining why measurements should survive a config change. They must not: a measurement feeds an absolute write |
+| A knob held at its end stop flooded HA until it timed out, and a timed-out brightness read **disabled the ceiling check** | The bench never held a knob against a stop for seconds with a slow HA behind it |
+| The colour path had no end stops at all, re-sending the same kelvin ten times a second | Brightness grew its floor and ceiling during the 22:04 investigation; colour was never revisited |
+| `console: quiet` omitted `startup`, `gateway` and `inputEvent`, so a first run printed one line | Nobody had run it with the shipped defaults rather than the development ones |
+
+The pattern in three of the four: a guard that exists on one path and not its
+twin, or a piece of state that outlived the assumption it was true under.
 
 Four latent bugs named in section 4 were found in the bench build and fixed:
 rows 3, 7, 8 and 11. Each was verified by running its new test against the
