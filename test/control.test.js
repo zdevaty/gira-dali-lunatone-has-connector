@@ -1043,3 +1043,64 @@ test('a healthy Home Assistant is never throttled', async () => {
   assert.equal(h.logs.filter((e) => e.alert === 'ha_slow').length, 0);
   assert.ok(brightnessCalls(h.calls).length >= 4, 'full rate throughout');
 });
+
+test('colour held against the end of its range stops sending', async () => {
+  // From the real installation: the button held and the knob turned into the
+  // bottom stop, colour already at 2700 K. Every flush re-sent an identical
+  // 2700 K -- a full DT8 sequence on the bus and a Home Assistant call, ten
+  // times a second, until the queue dropped commands. Brightness has had this
+  // guard at both ends from the start; colour never did.
+  const h = makeHarness({ kelvin: 2750, flushMs: 0 });
+  await h.feed([btn('pressed'), gen('start_left')]);
+
+  // Drive it down into the warm end and keep pushing.
+  for (let i = 0; i < 12; i++) {
+    await h.feed([abs(200 - i * 20)]);
+    await h.advance(10);
+  }
+  await h.settle();
+
+  const colours = colourCalls(h.calls);
+  assert.ok(colours.length >= 1, 'it still reaches the end of the range');
+  assert.equal(colours.at(-1).color_temp_kelvin, 2700, 'and lands exactly on it');
+  assert.ok(colours.length <= 4, `then stops: sent ${colours.length} calls for 12 reports`);
+
+  const quiet = h.logs.filter((e) => e.action === 'colour_suppressed');
+  assert.equal(quiet.length, 1, 'said why once, not once per flush');
+  assert.match(quiet[0].reason, /warm end/);
+});
+
+test('the cool end is guarded too, and turning back works immediately', async () => {
+  const h = makeHarness({ kelvin: 6450, flushMs: 0 });
+  await h.feed([btn('pressed'), gen('start_right')]);
+  for (let i = 0; i < 8; i++) {
+    await h.feed([abs(i * 20)]);
+    await h.advance(10);
+  }
+  await h.settle();
+  assert.equal(colourCalls(h.calls).at(-1).color_temp_kelvin, 6500);
+  assert.equal(h.logs.filter((e) => e.action === 'colour_suppressed').length, 1);
+
+  // Turning the other way must produce a call on the very next report.
+  const before = colourCalls(h.calls).length;
+  await h.feed([gen('start_left'), abs(100), abs(75)]);
+  await h.settle();
+  assert.ok(colourCalls(h.calls).length > before, 'the stop is not sticky');
+});
+
+test('a suppressed run is reported again after a real command', async () => {
+  const h = makeHarness({ brightness: 3, flushMs: 0 });
+  await h.feed([gen('start_left'), abs(200), abs(180), abs(160)]);
+  await h.settle();
+  const first = h.logs.filter((e) => e.action === 'brightness_suppressed').length;
+  assert.equal(first, 1, 'held on the floor, said once');
+
+  await h.feed([gen('start_right'), abs(100), abs(200)]);
+  await h.advance(10);
+  await h.feed([gen('start_left'), abs(100), abs(0), abs(0)]);
+  await h.settle();
+  assert.ok(
+    h.logs.filter((e) => e.action === 'brightness_suppressed').length > first,
+    'a real command in between resets it, so the next stop is reported afresh',
+  );
+});

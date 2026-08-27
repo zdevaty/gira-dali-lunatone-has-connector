@@ -197,7 +197,7 @@ function formatConsoleLine(event) {
             ? `${event.kelvin} K`
             : event.action === 'brightness'
               ? `brightness ${event.brightness}${event.floored ? ' (FLOORED)' : event.ceiling ? ' (CEILING)' : ''}`
-              : event.action === 'brightness_suppressed'
+              : event.action === 'brightness_suppressed' || event.action === 'colour_suppressed'
                 ? `no change — ${event.reason}`
                 : event.action;
       return `${time}  ${label.padEnd(6)} → ${event.entity} ${what}`;
