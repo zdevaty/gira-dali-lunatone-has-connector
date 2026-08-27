@@ -1,6 +1,6 @@
 {
   "name": "dali-bus-logger",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Read-only DALI bus monitor for a Lunatone DALI-2 IoT Gateway",
   "type": "module",
   "engines": {

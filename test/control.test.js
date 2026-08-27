@@ -917,3 +917,55 @@ test('an unmapped knob is reported again after the map changes', async () => {
     'the map changed, so the old "already told you" no longer applies',
   );
 });
+
+test('remapping an address discards what was measured about the old light', async () => {
+  // The failure this encodes, seen on the first real remap: A0 was mapped to one
+  // light, the gear mapping was learned, then A0 was remapped to a different
+  // light. The old gear was left sitting at level 40, and because the
+  // measurement survived the remap every later gesture computed 40 + delta and
+  // slammed the NEW light to level 64. The knob looked broken.
+  const h = makeHarness({
+    deviceMap: { 0: { entity: 'light.first', min_kelvin: 2700, max_kelvin: 6500, gear: 'short0' } },
+    brightness: 200,
+  });
+
+  h.controller.observeLevel('short0', 40);
+  h.controller.setDeviceMap({ 0: { entity: 'light.second', min_kelvin: 2700, max_kelvin: 6500 } });
+
+  await h.feed([gen('start_right'), abs(0), abs(25)]);
+  await h.settle();
+
+  assert.equal(
+    h.logs.filter((e) => e.alert === 'ha_brightness_divergence').length, 0,
+    'the old light’s level says nothing about the new one',
+  );
+  const call = h.calls.at(-1);
+  assert.equal(call.entity_id, 'light.second');
+  assert.equal(call.brightness_step, 25, 'a normal relative step, not an absolute write from a stale level');
+});
+
+test('an unchanged entry keeps what was measured about it', async () => {
+  // Commissioning means saving repeatedly. Throwing away every measurement on
+  // each save would make the daemon relearn the whole flat each time.
+  const h = makeHarness({
+    deviceMap: {
+      0: { entity: 'light.first', min_kelvin: 2700, max_kelvin: 6500, gear: 'short0' },
+      6: { entity: 'light.other', min_kelvin: 2700, max_kelvin: 6500, gear: 'short6' },
+    },
+    brightness: 200,
+  });
+
+  h.controller.observeLevel('short6', 40);
+  // Only address 0 is touched by this save.
+  h.controller.setDeviceMap({
+    0: { entity: 'light.changed', min_kelvin: 2700, max_kelvin: 6500 },
+    6: { entity: 'light.other', min_kelvin: 2700, max_kelvin: 6500, gear: 'short6' },
+  });
+
+  await h.feed([gen('start_right', 6), abs(0, 6), abs(25, 6)]);
+  await h.settle();
+  assert.equal(
+    h.logs.filter((e) => e.alert === 'ha_brightness_divergence').length, 1,
+    'the untouched room still believes the bus over Home Assistant',
+  );
+});
