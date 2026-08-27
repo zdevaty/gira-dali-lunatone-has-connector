@@ -9,7 +9,7 @@ started from.
 
 | Phase | State |
 |---|---|
-| 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels. 134 tests, all offline. |
+| 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection (section 5). 147 tests, all offline. |
 | 2 — packaging | **Written, unbuilt.** `addon/` and `deploy/` exist; there is no Docker on the machine they were written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
 | 3 — web UI | Not started. |
 | 4 — setup features | Not started. |
@@ -200,7 +200,7 @@ notice, and what we do. Rows marked **new** do not exist in the bench build.
 | 1 | Process crashes | Switches dead until someone notices | Supervisor sees the container exit | `boot: auto` + watchdog; restart in ~2 s. Crash handler writes a `crash` event to the log first **(new)** |
 | 2 | Event loop wedged (process alive, doing nothing) | Switches dead, everything looks healthy | Watchdog worker thread stops getting heartbeats **(new)** | Worker `SIGKILL`s the process; supervisor restarts it |
 | 3 | **SD-card write stall** | Every frame blocks on `appendFileSync`; a stalled card freezes the bridge for seconds | Event-loop lag metric **(new)** | Buffered async writes; no `*Sync` fs calls outside startup **(new)** |
-| 4 | WebSocket half-open (TCP black hole) | Frames silently stop; process healthy; switches dead | Read-only `GET /info` probe succeeds while the WS has been silent **(new)** | Force reconnect |
+| 4 | WebSocket half-open (TCP black hole) | Frames silently stop; process healthy; switches dead | Read-only `GET /info` probe succeeds while the WS has been silent **(new)** | Abandon the socket and reconnect. Threshold backs off on a quiet bus — see section 5 |
 | 5 | Gateway reboots / LAN blip | `close`/`error` fires | Already handled | Backoff reconnect; only reset the backoff after the link has been stable 30 s **(new — today a flapping link resets it every time)** |
 | 6 | HA restarts | Calls fail for ~30 s | `ha_unreachable` alert (exists) | Drop calls, never queue; recover automatically |
 | 7 | **HA slow → call backlog** | `st.chain` serialises calls behind a 5 s timeout. 10 events/s during a 30 s HA stall queues minutes of stale brightness writes that land long after the hand left the knob | Chain depth + queue age **(new)** | Drop any queued call older than `staleMs` (~1 s); cap chain depth; count and alert **(new)** |
@@ -252,16 +252,47 @@ identical from inside:
 
 The gateway's own protocol has a `PingEvent` with an `echo` field, so an active
 keepalive is possible — but it means *sending* on the socket, and this daemon
-currently sends nothing at all. It stays **off by default** behind
-`gateway_ws_ping`, to be enabled only after we have watched the real gateway and
-confirmed the message shape. The `GET /info` probe gives us stall detection
-today without sending anything.
+currently sends nothing at all. It stays off, and the `GET /info` probe gives us
+stall detection without sending anything.
 
-**First measurement on the Pi:** log the distribution of gaps between WebSocket
-messages over one night. If the gateway emits `PingEvent` unprompted, silence
-becomes a definitive stall signal and `wsIdleMs` can be tightened to seconds.
-Until then it is set conservatively (120 s) because a needless reconnect during
-a gesture drops events.
+### Measured, 27 Aug 2026 — firmware v1.18.7/1.4.6
+
+Watched one monitor socket for 300 s against the real gateway on an idle bus:
+
+```
+message types      : {"info":1}      ← the greeting, on connect
+longest silence    : 300s
+gateway closed us  : no, held the whole time
+unprompted keepalive: NO
+```
+
+**There is no keepalive.** The gateway greets a new connection with one `info`
+message and then says nothing whatsoever until the bus does. It also never drops
+an idle client. Two consequences, both load-bearing:
+
+1. **The HTTP probe is not a nicety, it is the entire mechanism.** Silence cannot
+   distinguish a dead socket from a quiet bus, so where the probe endpoint is
+   missing, stall detection must switch **off** rather than guess. That is what
+   `gateway_probe_unavailable` does.
+2. **The naive rule reconnects all night.** A quiet bus is silent for hours, so
+   "silent for 120 s while HTTP answers" would fire roughly 700 times before
+   morning. So each silence-triggered reconnect that turns up no real bus traffic
+   **doubles** the threshold, capped at an hour; genuine bus traffic resets it.
+   A stall during an active evening is still caught in about two minutes, while a
+   quiet night costs a handful of reconnects.
+
+The greeting is deliberately *not* counted as bus traffic for that reset — it
+arrives on every reconnect, so treating it as evidence the bus is alive would
+defeat the back-off entirely.
+
+### Killing a socket that has stopped answering
+
+`ws.close()` is not enough, and the end-to-end test proved it: closing opens a
+*handshake* and waits for the peer to close back — and the socket worth killing
+is precisely the one that has stopped answering, so that event may never arrive.
+The daemon asks politely, then stops waiting after a 2 s grace and takes the
+reconnect path regardless. The abandoned socket keeps its listeners, but the
+disconnect handler is guarded, so a late close cannot cause a second reconnect.
 
 ---
 
@@ -560,19 +591,28 @@ would otherwise be diagnosed as haunted hardware.
 
 ## 14. Open questions — to be answered on real hardware
 
-1. **Which HA installation type?** Decides add-on vs systemd. One look at System
-   information.
-2. **Does the gateway accept two concurrent WebSocket monitor clients?** If not,
-   the observe-only parallel run in Phase 2 is impossible and the cutover
-   becomes a straight switch with rollback. **Test this first** — it is the only
-   thing that can invalidate the rollout plan.
-3. **Does the gateway emit `PingEvent` unprompted?** Decides whether WS silence
-   is a stall signal, and how tight `wsIdleMs` can be.
+1. ~~**Which HA installation type?**~~ **Answered 27 Aug, by inference.**
+   `GET /api/hassio/app/entrypoint.js` on the HA host returns **401, not 404** —
+   the route is registered, which only happens when the `hassio` integration is
+   loaded. So the Supervisor is present: HAOS or Supervised, and **the add-on
+   path is available**. Worth ten seconds in System information to confirm
+   directly, but the packaging can proceed on it.
+2. ~~**Does the gateway accept two concurrent WebSocket monitor clients?**~~
+   **Partly answered 27 Aug.** Two sockets connected and both were held for 40 s;
+   the gateway dropped neither. The bus was idle, so this proves both are
+   *accepted*, not yet that both *receive frames*. Ten seconds of someone turning
+   a knob closes it. The observe-only parallel run is no longer presumed blocked.
+3. ~~**Does the gateway emit `PingEvent` unprompted?**~~ **Answered 27 Aug: no.**
+   One `info` greeting on connect, then 300 s of complete silence on an idle bus,
+   and it never dropped the client. See section 5 — this is why the HTTP probe is
+   the whole mechanism and why the idle threshold backs off.
 4. **Is the Pi booting from SD or USB?** Decides how hard to push on log volume.
 5. **What is HA's actual restart frequency here?** It is the dominant source of
    switch downtime and we should measure it rather than assume.
 6. **Is `TZ` passed into add-on containers?** The startup line will print the
    resolved zone; log filenames depend on it.
+7. **How long does a real reconnect take against the real gateway?** Against the
+   fake it is about a second. It sets how much of a gesture a stall costs.
 
 ---
 

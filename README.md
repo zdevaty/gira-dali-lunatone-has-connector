@@ -24,7 +24,7 @@ GATEWAY_IP=10.0.0.230 LOG_DIR=./logs \
 ```
 
 ```bash
-npm test   # 132 tests, all offline
+npm test   # 147 tests, all offline
 ```
 
 ## Configuration
@@ -55,6 +55,9 @@ npm test   # 132 tests, all offline
 | `LOG_MIN_FREE_MB` | `256` | Below this much free disk, stop capturing frames and keep bridging. |
 | `WATCHDOG` | `true` | Worker thread that kills the process if the event loop wedges. |
 | `WATCHDOG_TIMEOUT_MS` | `15000` | How long the event loop may be unresponsive first. |
+| `GATEWAY_PROBE_PATH` | `/info` | Read-only endpoint used as a second opinion on whether the gateway is alive. |
+| `GATEWAY_PROBE_MS` | `30000` | How often to ask it. |
+| `GATEWAY_IDLE_MS` | `120000` | Socket silence, with the gateway answering HTTP, before the socket is treated as dead. Doubles up to an hour while the bus stays genuinely quiet. |
 
 The daemon refuses to start with a plain error (no stack trace) if `GATEWAY_IP`/`LOG_DIR`
 are missing, or if control is enabled without `HA_TOKEN`/`DEVICE_MAP`.
@@ -390,6 +393,9 @@ Console output is one line per event, meant for `journalctl -f`:
 | `clock_step` | Wall and monotonic clocks disagreed by more than a second. Timestamps either side are not comparable. |
 | `watchdog_kill` | The event loop stopped responding and the process was killed so the supervisor could restart it. |
 | `frame_handler_failed` | A frame threw. Reported once, then every hundredth; the bridge keeps running. |
+| `gateway_socket_stalled` | The gateway answers HTTP but the monitor socket has gone quiet. The socket is abandoned and reconnected. |
+| `gateway_probe_unavailable` | No probe endpoint on this firmware, so stall detection is **off** — silence alone cannot tell a dead socket from a quiet bus. |
+| `gateway_bus_errors` | The gateway reports bus faults of its own. Once per distinct fault, not once per probe. |
 | `device_map_problem` | One `devices.json` entry was skipped. The rest of the map is in force. |
 | `uncaught_exception` / `unhandled_rejection` | Written to the capture just before exiting non-zero. |
 
@@ -479,6 +485,7 @@ lib/logstore.js     buffered JSONL capture: rotation, retention, disk floor
 lib/clock.js        monotonic time for intervals; clock-step detection
 lib/watchdog.js     worker thread that kills a wedged process
 lib/lock.js         one instance per machine
+lib/liveness.js     read-only gateway probe; half-open socket detection
 lib/options.js      add-on / Supervisor runtime adapters
 addon/              Home Assistant add-on manifest, Dockerfile, docs
 deploy/             push.sh, and the systemd unit for non-HAOS installs

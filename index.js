@@ -11,6 +11,7 @@ import { createLogStore } from './lib/logstore.js';
 import { startWatchdog } from './lib/watchdog.js';
 import { acquireLock } from './lib/lock.js';
 import { applyAddonOptions, applySupervisorEnvironment } from './lib/options.js';
+import { createGatewayLiveness } from './lib/liveness.js';
 
 const MAX_BACKOFF_MS = 60_000;
 // How long a link must hold before its backoff is forgiven. A gateway that
@@ -18,6 +19,10 @@ const MAX_BACKOFF_MS = 60_000;
 // backoff on every attempt and be retried once a second, forever.
 const STABLE_MS = 30_000;
 const SHUTDOWN_BUDGET_MS = 3000;
+// How long to wait for a close handshake before giving up on it. Closing a
+// WebSocket politely asks the peer to close back -- and the socket we are trying
+// to kill is one that has stopped answering, so it never will.
+const CLOSE_GRACE_MS = 2000;
 const { version: VERSION } = createRequire(import.meta.url)('./package.json');
 
 function fatal(...lines) {
@@ -145,6 +150,9 @@ function loadConfig() {
     logRetentionDays: Number(process.env.LOG_RETENTION_DAYS ?? 30),
     logMaxMb: Number(process.env.LOG_MAX_MB ?? 512),
     logMinFreeMb: Number(process.env.LOG_MIN_FREE_MB ?? 256),
+    gatewayProbePath: process.env.GATEWAY_PROBE_PATH || '/info',
+    gatewayProbeMs: Number(process.env.GATEWAY_PROBE_MS ?? 30_000),
+    gatewayIdleMs: Number(process.env.GATEWAY_IDLE_MS ?? 120_000),
   };
 }
 
@@ -260,6 +268,8 @@ function formatConsoleLine(event) {
       return `${time}  start  v${event.version} on ${event.host} (node ${event.node}, ${event.tz}) gateway=${event.gateway} control=${event.control} logs=${event.log_dir} [${event.log_frames}]`;
     case 'log':
       return `${time}  logs   ${event.action} ${event.file}${event.reason ? ` (${event.reason})` : ''}`;
+    case 'gateway':
+      return `${time}  gw     ${event.name} ${event.version} (${event.lines} line${event.lines === 1 ? '' : 's'}, tier ${event.tier})`;
     case 'discover': {
       if (event.step === 'device') {
         const detail =
@@ -393,6 +403,7 @@ function main() {
     leaving = true;
     emit({ kind: 'connection', status: 'shutdown', signal });
     watchdog.stop();
+    liveness.stop();
     // Bounded: the Supervisor sends SIGKILL ten seconds after SIGTERM, and a
     // hung Home Assistant call must not spend that budget.
     await Promise.race([
@@ -503,6 +514,22 @@ function main() {
 
   let backoffMs = 1000;
   let discoveryStarted = false;
+  // Reassigned by each connect(); calling it abandons the current socket.
+  let dropCurrent = () => {};
+
+  // A half-open socket is the worst failure here: the process is healthy, the
+  // socket is open, frames have simply stopped, and every knob in the building
+  // is dead with nothing in the log. Silence alone cannot be the trigger -- a bus
+  // with nobody home is legitimately silent for hours -- so this asks the gateway
+  // over plain HTTP for a second opinion. GET only; it cannot reach the bus.
+  const liveness = createGatewayLiveness({
+    host: config.gatewayIp,
+    probePath: config.gatewayProbePath,
+    probeEveryMs: config.gatewayProbeMs,
+    idleMs: config.gatewayIdleMs,
+    log: emit,
+    onStall: () => dropCurrent(),
+  });
 
   function connect() {
     if (leaving) return;
@@ -516,6 +543,7 @@ function main() {
     function handleDown() {
       if (down) return;
       down = true;
+      liveness.noteDisconnected();
       if (stableTimer) clearTimeout(stableTimer);
       if (leaving) return;
       emit({ kind: 'connection', status: 'disconnected' });
@@ -527,7 +555,24 @@ function main() {
       backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     }
 
+    // Abandon this socket. `close()` alone is not enough: it opens a closing
+    // handshake and waits for the peer to close back, and the socket worth
+    // killing is precisely the one that has stopped answering -- so the 'close'
+    // event may never arrive. Ask politely, then stop waiting.
+    //
+    // The old socket keeps its listeners, but handleDown is guarded, so a late
+    // close from it cannot cause a second reconnect.
+    dropCurrent = () => {
+      try {
+        ws.close();
+      } catch {
+        // Already gone.
+      }
+      setTimeout(handleDown, CLOSE_GRACE_MS).unref?.();
+    };
+
     ws.addEventListener('open', () => {
+      liveness.noteConnected();
       emit({ kind: 'connection', status: 'connected' });
       // Forgiven only once the link has proven it can hold. Resetting on `open`
       // alone turns a flapping gateway into a once-a-second retry loop.
@@ -546,13 +591,22 @@ function main() {
     });
 
     ws.addEventListener('message', (ev) => {
+      // Every message counts, not just decoded bus frames. The gateway greets a
+      // new connection with an `info` message and may send other traffic; any of
+      // it proves the socket is carrying data, which is the only question the
+      // stall detector asks.
       let msg;
       try {
         msg = JSON.parse(ev.data);
       } catch {
+        liveness.noteMessage(false);
         return;
       }
       const frame = msg && msg.type === 'daliMonitor' ? msg.data : null;
+      // Any message proves the socket carries data; only a bus frame proves the
+      // BUS is active. The gateway greets every reconnect with `info`, so
+      // treating that as bus traffic would defeat the idle back-off.
+      liveness.noteMessage(Boolean(frame));
       if (!frame) return;
       handleFrame(frame.bits, frame.data);
     });
@@ -563,6 +617,8 @@ function main() {
 
   // Check HA before touching the bus. A failure is reported in full detail but is
   // never fatal: logging the bus is useful on its own, and HA may come back later.
+  liveness.start();
+
   if (ha) {
     ha.preflight(config.deviceMap)
       .then((ok) => {

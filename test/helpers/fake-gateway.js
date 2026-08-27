@@ -32,12 +32,29 @@ function textFrame(text) {
 export function createFakeGateway() {
   const sockets = new Set();
   let connections = 0;
+  let infoStatus = 200;
+  let infoErrors = {};
 
   const server = http.createServer((req, res) => {
-    // The liveness probe the design proposes: read-only, and it exists.
+    // The liveness probe the design proposes. The body is the real shape, taken
+    // from the gateway at 10.0.0.230 on 27 Aug 2026 -- `errors` is an object
+    // keyed by fault, not a count, which is what the detector reads.
     if (req.url === '/info') {
+      if (infoStatus !== 200) {
+        res.writeHead(infoStatus);
+        res.end();
+        return;
+      }
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ name: 'fake-gateway', errors: 0, lines: [{ id: 0, status: 'ok' }] }));
+      res.end(JSON.stringify({
+        name: 'DALI-2 IoT',
+        version: 'v1.18.7/1.4.6',
+        tier: 'plus',
+        uid: '6feb271f-e396-42e2-8557-6dd1ae30bf2a',
+        startupMode: 'normal',
+        errors: infoErrors,
+        descriptor: { lines: 1, bufferSize: 32, protocolVersionMajor: 1, protocolVersionMinor: 6 },
+      }));
       return;
     }
     res.writeHead(404);
@@ -67,6 +84,10 @@ export function createFakeGateway() {
       for (const s of sockets) s.write(buf);
     },
     monitor: (bits, data) => ({ type: 'daliMonitor', data: { bits, data } }),
+    // The gateway greets every new connection with this before any bus traffic.
+    greet: () => ({ type: 'info', data: { name: 'DALI-2 IoT', version: 'v1.18.7/1.4.6' } }),
+    setInfoStatus: (code) => { infoStatus = code; },
+    setInfoErrors: (errors) => { infoErrors = errors; },
     clients: () => sockets.size,
     connections: () => connections,
     close: () =>

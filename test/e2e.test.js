@@ -211,3 +211,57 @@ test('a real gesture from the capture reaches Home Assistant', async (t) => {
     'the token must not appear anywhere in the capture',
   );
 });
+
+test('a silent socket is reconnected while the gateway still answers HTTP', async (t) => {
+  // The half-open TCP case, end to end. The fake gateway accepts the connection
+  // and then says nothing at all, while /info keeps answering -- which is
+  // exactly what a black-holed connection looks like from inside the daemon.
+  const gw = createFakeGateway();
+  const port = await gw.listen();
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-e2e-'));
+
+  const child = spawn(process.execPath, ['index.js'], {
+    env: {
+      ...process.env,
+      GATEWAY_IP: `127.0.0.1:${port}`,
+      LOG_DIR: dir,
+      CONTROL_ENABLED: 'false',
+      CONSOLE: 'off',
+      WATCHDOG: 'false',
+      GATEWAY_PROBE_MS: '300',
+      GATEWAY_IDLE_MS: '1500',
+    },
+    stdio: 'ignore',
+  });
+  t.after(async () => {
+    if (process.env.DALI_E2E_DUMP) {
+      console.error('--- daemon log ---');
+      for (const e of read(dir)) console.error('   ', JSON.stringify(e).slice(0, 160));
+      console.error('--- gateway connections:', gw.connections(), 'child exit:', child.exitCode, '---');
+    }
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await gw.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  await waitFor(() => read(dir).some((e) => e.kind === 'connection' && e.status === 'connected'));
+  assert.equal(gw.connections(), 1);
+
+  // Say nothing. The socket stays open and healthy-looking the whole time.
+  const events = await waitFor(
+    () => (read(dir).some((e) => e.alert === 'gateway_socket_stalled') ? read(dir) : null),
+    { timeoutMs: 10_000 },
+  );
+
+  const stall = events.find((e) => e.alert === 'gateway_socket_stalled');
+  assert.ok(stall.silent_for_ms >= 1500, `reported ${stall.silent_for_ms} ms of silence`);
+  assert.ok(typeof stall.probe_latency_ms === 'number', 'and that HTTP was answering at the time');
+
+  await waitFor(() => gw.connections() >= 2, { timeoutMs: 10_000 });
+  // The gateway object updates the instant the socket is accepted; the capture
+  // is buffered and flushes every 250 ms. Wait for it rather than racing it.
+  await waitFor(
+    () => read(dir).filter((e) => e.kind === 'connection' && e.status === 'connected').length >= 2,
+    { timeoutMs: 5000 },
+  );
+});
