@@ -630,8 +630,10 @@ would otherwise be diagnosed as haunted hardware.
 4. **Is the Pi booting from SD or USB?** Decides how hard to push on log volume.
 5. **What is HA's actual restart frequency here?** It is the dominant source of
    switch downtime and we should measure it rather than assume.
-6. **Is `TZ` passed into app containers?** The startup line will print the
-   resolved zone; log filenames depend on it.
+6. ~~**Is `TZ` passed into app containers?**~~ **Answered 27 Aug: yes.** The
+   first run on the Pi reported `Europe/Prague` in its startup line, matching
+   Home Assistant's own setting rather than UTC. Capture files therefore roll at
+   local midnight as intended.
 7. **How long does a real reconnect take against the real gateway?** Against the
    fake it is about a second. It sets how much of a gesture a stall costs.
 

@@ -60,3 +60,14 @@ test('outside the Supervisor nothing is invented', () => {
   assert.equal(applySupervisorEnvironment({ env }), false);
   assert.deepEqual(env, {});
 });
+
+test('the reported version matches the one Home Assistant shows', () => {
+  // The app log said v0.1.0 while the Apps page said 0.2.1, so the running
+  // build could not be identified from its own output. config.yaml is the
+  // source of truth: it is what HA displays and what gates the Update button.
+  const cfg = fs.readFileSync(new URL('../config.yaml', import.meta.url), 'utf8');
+  const manifest = /^version:\s*"([^"]+)"/m.exec(cfg)?.[1];
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(manifest, 'config.yaml must declare a version');
+  assert.equal(pkg.version, manifest, 'bump both, or neither');
+});
