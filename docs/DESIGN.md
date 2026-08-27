@@ -13,7 +13,7 @@ started from.
 | 2 — packaging | **Written, unbuilt.** `addon/` and `deploy/` exist; there is no Docker on the machine they were written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
 | 3 — web UI | Not started. |
 | 4 — setup features | Not started. |
-| 5 — cutover | Not started. Blocked on open question 2 below. |
+| 5 — cutover | Not started, no longer blocked: open question 2 is answered, so the Pi can run alongside the bench instance first. |
 
 Four latent bugs named in section 4 were found in the bench build and fixed:
 rows 3, 7, 8 and 11. Each was verified by running its new test against the
@@ -598,10 +598,15 @@ would otherwise be diagnosed as haunted hardware.
    path is available**. Worth ten seconds in System information to confirm
    directly, but the packaging can proceed on it.
 2. ~~**Does the gateway accept two concurrent WebSocket monitor clients?**~~
-   **Partly answered 27 Aug.** Two sockets connected and both were held for 40 s;
-   the gateway dropped neither. The bus was idle, so this proves both are
-   *accepted*, not yet that both *receive frames*. Ten seconds of someone turning
-   a knob closes it. The observe-only parallel run is no longer presumed blocked.
+   **Answered 27 Aug: yes, fully.** Two sockets held open across a real knob
+   gesture received **29 frames each, byte-for-byte identical** -- start_right,
+   the absolute counter climbing 96 -> 151, start_left, then 150 -> 70. Neither
+   client was starved and neither was dropped. **The observe-only parallel run in
+   Phase 2 is safe**, so the Pi can watch the bus alongside the bench instance
+   before it takes over anything.
+
+   Incidentally the first live decode by the current build: one gesture is about
+   29 frames, which is the number to size capture volume from.
 3. ~~**Does the gateway emit `PingEvent` unprompted?**~~ **Answered 27 Aug: no.**
    One `info` greeting on connect, then 300 s of complete silence on an idle bus,
    and it never dropped the client. See section 5 — this is why the HTTP probe is
