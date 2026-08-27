@@ -1,4 +1,4 @@
-# Home Assistant add-on manifest.
+# Home Assistant app manifest.
 #
 # UNTESTED until it has been built on the Pi: there is no Docker on the machine
 # this was written on. Every key below is from the official reference, but the
@@ -6,7 +6,7 @@
 #
 # Keys marked "Phase 3" stay commented out on purpose. `ingress` without a web
 # server behind it shows a panel that 502s, and `watchdog` pointing at an
-# endpoint that does not exist yet would have the Supervisor restart this add-on
+# endpoint that does not exist yet would have the Supervisor restart this app
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
@@ -69,7 +69,7 @@ environment:
 
 options:
   # null, not "" -- an option with no default is mandatory, so the Supervisor
-  # refuses to start the add-on until it is filled in. Empty would start and
+  # refuses to start the app until it is filled in. Empty would start and
   # exit 1 immediately, and ten of those in half an hour is a Supervisor alert.
   gateway_host: null
   control_enabled: false

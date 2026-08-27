@@ -486,11 +486,11 @@ lib/clock.js        monotonic time for intervals; clock-step detection
 lib/watchdog.js     worker thread that kills a wedged process
 lib/lock.js         one instance per machine
 lib/liveness.js     read-only gateway probe; half-open socket detection
-lib/options.js      add-on / Supervisor runtime adapters
-config.yaml         add-on manifest -- the repo root IS the add-on directory
+lib/options.js      app / Supervisor runtime adapters
+config.yaml         app manifest -- the repo root IS the app directory
 Dockerfile          node:22-alpine; build context is the repo root
-DOCS.md             the add-on's Documentation tab in Home Assistant
-translations/       friendly option labels for the add-on config UI
+DOCS.md             the app's Documentation tab in Home Assistant
+translations/       friendly option labels for the app config UI
 deploy/systemd/     the unit and install notes for non-HAOS installs
 docs/DESIGN.md      why it is put together this way, and what was rejected
 test/               built from real bus captures; plus a fake gateway on loopback
@@ -499,20 +499,24 @@ test/               built from real bus captures; plus a fake gateway on loopbac
 ## Running it on the Raspberry Pi
 
 See [docs/DESIGN.md](docs/DESIGN.md). Short version: it becomes a Home Assistant
-add-on, which puts the UI in the HA sidebar behind HA's own login and removes
+app, which puts the UI in the HA sidebar behind HA's own login and removes
 the long-lived token entirely (`homeassistant_api: true` gets a scoped one from
 the Supervisor).
 
-The manifest lives at the repo root so the add-on installs with a clone. From
-the Terminal add-on:
+The manifest lives at the repo root so the app installs with a clone. From the
+Terminal app — the shared folder is still called `addons`, even though what
+lives in it is now called an app:
 
 ```sh
 git clone https://github.com/zdevaty/gira-dali-lunatone-has-connector /addons/dali_bridge
+ha store reload
+ha apps install local_dali_bridge
 ```
 
-then Add-on Store → ⋮ Check for updates → *Local add-ons*. To update: `git pull`
-there, bump `version` in `config.yaml`, click Update. For a non-HAOS install
-there is a systemd unit in `deploy/systemd/`.
+Or **Settings → Apps → App store → ⋮ → Check for updates**, then pick it from
+**Local apps**. To update: `git pull` there and `ha apps rebuild
+local_dali_bridge`. For a non-HAOS install there is a systemd unit in
+`deploy/systemd/`.
 
 The daemon is the wall switches now — with the controllers out of
 application-controller mode, nothing else on the bus reacts to the knobs. That

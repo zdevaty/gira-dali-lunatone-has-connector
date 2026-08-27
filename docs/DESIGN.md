@@ -10,7 +10,7 @@ started from.
 | Phase | State |
 |---|---|
 | 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection (section 5). 147 tests, all offline. |
-| 2 — packaging | **Written, unbuilt.** The repo root **is** the add-on (`config.yaml` + `Dockerfile` at top level), so it installs by cloning straight into `/addons`. There is no Docker on the machine it was written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
+| 2 — packaging | **Written, unbuilt.** The repo root **is** the app (`config.yaml` + `Dockerfile` at top level), so it installs by cloning straight into `/addons`. There is no Docker on the machine it was written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
 | 3 — web UI | Not started. |
 | 4 — setup features | Not started. |
 | 5 — cutover | Not started, no longer blocked: open question 2 is answered, so the Pi can run alongside the bench instance first. |
@@ -84,12 +84,12 @@ The Pi was powered down, so this is the first thing to establish:
 
 | Installation type | Available | Recommendation |
 |---|---|---|
-| **Home Assistant OS** | add-on only (the OS is a locked appliance) | **Add-on** |
-| **Supervised** | add-on *or* systemd | **Add-on** |
+| **Home Assistant OS** | app only (the OS is a locked appliance) | **App** |
+| **Supervised** | app *or* systemd | **App** |
 | **Container** (HA in Docker) | systemd *or* a sibling container | **systemd** |
 | **Core** (venv) | systemd | **systemd** |
 
-A Pi 4 running HA is HAOS in the large majority of cases, so the add-on is the
+A Pi 4 running HA is HAOS in the large majority of cases, so the app is the
 primary path and gets the detailed design. The systemd path is a genuine
 fallback, not an afterthought — section 11.2 specifies it fully.
 
@@ -97,10 +97,10 @@ fallback, not an afterthought — section 11.2 specifies it fully.
 with a thin adapter per environment (config source, HA credentials, paths). The
 adapters are a few dozen lines each.
 
-### Why an add-on, when systemd has fewer moving parts
+### Why an app, when systemd has fewer moving parts
 
 systemd is the leaner mechanism, and on any other box I would pick it. The
-add-on wins here because of what it gives us for free, none of which is
+app wins here because of what it gives us for free, none of which is
 cosmetic:
 
 - **Ingress**: a web UI inside the HA sidebar, at HA's own URL, behind HA's own
@@ -124,7 +124,7 @@ already there and already carrying HA itself, so this adds no new failure domain
 
 **One process.** The alternative — splitting the UI from the bridge so a UI bug
 cannot touch the wall switches — is the textbook answer, and I rejected it: an
-add-on is one container, so two processes means an init system (s6) inside it,
+app is one container, so two processes means an init system (s6) inside it,
 IPC, and two things to supervise, to buy isolation from a UI that serves maybe
 five requests a day. At this size, fewer moving parts *is* the reliability
 strategy. Instead the UI is contained by rule (section 6.3) and a wedged event
@@ -164,10 +164,10 @@ src/
   ui/
     server.js        node:http; routes; SSE
     public/          index.html, app.js, style.css — no build step
-config.yaml          add-on manifest -- the repo root IS the add-on directory
+config.yaml          app manifest -- the repo root IS the app directory
 Dockerfile           node:22-alpine; build context is the repo root
-DOCS.md              the add-on's Documentation tab
-translations/        friendly option labels for the add-on config UI
+DOCS.md              the app's Documentation tab
+translations/        friendly option labels for the app config UI
 deploy/systemd/      dali-bridge.service, install.sh
 docs/DESIGN.md       this file
 ```
@@ -236,7 +236,7 @@ are the reason this is a design project and not a packaging exercise.**
   `SIGKILL`s the process. ~30 lines, no dependencies.
 - On the systemd path, `sd_notify` + `WatchdogSec=30` does the same job natively.
 
-Crash-loop protection: the Supervisor raises an alert if an add-on dies ten
+Crash-loop protection: the Supervisor raises an alert if an app dies ten
 times in 30 minutes, so transient failures are handled with internal backoff and
 never by exiting.
 
@@ -358,7 +358,7 @@ A comment heartbeat every 15 s keeps idle proxies from closing the stream.
 
 ### 6.4 Security
 
-Under ingress, HA has already authenticated the viewer, so the add-on adds no
+Under ingress, HA has already authenticated the viewer, so the app adds no
 login — but it **only accepts connections from `172.30.32.2`** (the Supervisor),
 per the ingress requirement, and the port is never published to the LAN.
 
@@ -396,13 +396,13 @@ takes the whole house down, which is a far worse outcome than losing a capture.
   housekeeping breaks the actual job" bug worth naming.
 - **Volume control**: `log_frames: all | decoded | events | alerts`. `all` while
   debugging; the health page shows what it costs per day.
-- **Console**: `quiet` by default in the add-on. stdout goes to the add-on log,
+- **Console**: `quiet` by default in the app. stdout goes to the app log,
   which is also the SD card — printing every frame writes it twice.
 
 **Location**: `/data/logs`, with `backup_exclude: ["logs/**"]` so hundreds of
 megabytes of captures stay out of every HA backup. `/data` is wiped if the
-add-on is uninstalled, so *Export to /share* is a one-click button and the
-uninstall warning is in the add-on docs. Captures worth keeping get kept
+app is uninstalled, so *Export to /share* is a one-click button and the
+uninstall warning is in the app docs. Captures worth keeping get kept
 deliberately, which is how this project already treats them.
 
 ---
@@ -432,11 +432,11 @@ reliability bug, not a convenience.
 
 | What | Where | Changed by | Restart? |
 |---|---|---|---|
-| Infrastructure (gateway host, log volume/retention, console level, control on/off) | add-on options → `/data/options.json` | HA add-on Config tab | yes (add-on restart) |
+| Infrastructure (gateway host, log volume/retention, console level, control on/off) | app options → `/data/options.json` | HA app Config tab | yes (app restart) |
 | Device map (address → entity, kelvin range, gear) | `/data/devices.json` | **the UI** | no — hot reload |
 | Behaviour tuning (speed curve, flush, gains, thresholds) | `/data/tuning.json` | **the UI** | no — live apply |
 
-Tuning parameters are deliberately **not** add-on options: they belong to the
+Tuning parameters are deliberately **not** app options: they belong to the
 thing that can change them live and show you the effect.
 
 **Validation is split by consequence:**
@@ -455,7 +455,7 @@ previous version.
 
 ## 10. Credentials
 
-On the add-on path the long-lived token **ceases to exist**:
+On the app path the long-lived token **ceases to exist**:
 `homeassistant_api: true` makes the Supervisor inject `SUPERVISOR_TOKEN` and
 proxy `http://supervisor/core/api`. Nothing to store, nothing to rotate, nothing
 to leak, and it cannot expire mid-gesture.
@@ -472,7 +472,7 @@ never the value.
 
 ## 11. Packaging
 
-### 11.1 The add-on (primary)
+### 11.1 The app (primary)
 
 ```yaml
 name: DALI Bridge
@@ -525,19 +525,19 @@ the first build on the Pi records one.
 config UI. `DOCS.md` becomes the Documentation tab.
 
 **Getting it there**: the manifest sits at the repo root precisely so the whole
-thing installs with a clone. From the Terminal add-on (`git` ships in it):
+thing installs with a clone. From the Terminal app (`git` ships in it):
 
 ```sh
 git clone https://github.com/zdevaty/gira-dali-lunatone-has-connector /addons/dali_bridge
 ```
 
-Then Add-on Store → ⋮ Check for updates → *Local add-ons*. Updating is
+Then App store → ⋮ Check for updates → *Local apps*. Updating is
 `git pull` in that directory, bump `version` in `config.yaml`, then Update.
 
-The alternative — publishing this as an add-on *repository* (a `repository.yaml`
-at the root, add-on in a subdirectory) so the Supervisor clones and updates it
+The alternative — publishing this as an app *repository* (a `repository.yaml`
+at the root, app in a subdirectory) so the Supervisor clones and updates it
 itself with no shell at all — was considered and deferred. The Docker build
-context is the add-on subdirectory, so it would force the entire application
+context is the app subdirectory, so it would force the entire application
 down one level and rewrite every test import for a one-click update button. Not
 worth it yet; revisit if updating becomes a chore.
 
@@ -610,7 +610,7 @@ would otherwise be diagnosed as haunted hardware.
 1. ~~**Which HA installation type?**~~ **Answered 27 Aug, by inference.**
    `GET /api/hassio/app/entrypoint.js` on the HA host returns **401, not 404** —
    the route is registered, which only happens when the `hassio` integration is
-   loaded. So the Supervisor is present: HAOS or Supervised, and **the add-on
+   loaded. So the Supervisor is present: HAOS or Supervised, and **the app
    path is available**. Worth ten seconds in System information to confirm
    directly, but the packaging can proceed on it.
 2. ~~**Does the gateway accept two concurrent WebSocket monitor clients?**~~
@@ -630,7 +630,7 @@ would otherwise be diagnosed as haunted hardware.
 4. **Is the Pi booting from SD or USB?** Decides how hard to push on log volume.
 5. **What is HA's actual restart frequency here?** It is the dominant source of
    switch downtime and we should measure it rather than assume.
-6. **Is `TZ` passed into add-on containers?** The startup line will print the
+6. **Is `TZ` passed into app containers?** The startup line will print the
    resolved zone; log filenames depend on it.
 7. **How long does a real reconnect take against the real gateway?** Against the
    fake it is about a second. It sets how much of a gesture a stall costs.
@@ -642,7 +642,7 @@ would otherwise be diagnosed as haunted hardware.
 - **Rewriting as a HA custom integration.** The most HA-native option: config
   flow, real entities, no separate service. Rejected — it means rewriting a
   decoder that took real measurement to get right, in a runtime where a bug in
-  our code can take Home Assistant down with it. The add-on gets us the same UI
+  our code can take Home Assistant down with it. The app gets us the same UI
   integration with a blast radius of one container.
 - **Node-RED / AppDaemon / pyscript.** Same rewrite cost, worse latency for a
   175 ms control loop.

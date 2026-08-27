@@ -2,7 +2,7 @@
 
 Only needed if Home Assistant is **not** HAOS or Supervised. Check first:
 Settings → System → Repairs → ⋮ → System information → *Installation Type*.
-If it says Home Assistant OS or Supervised, use the add-on instead (`addon/`).
+If it says Home Assistant OS or Supervised, use the app instead — the repo root is the app.
 
 ```sh
 sudo useradd --system --home /opt/dali-bridge --shell /usr/sbin/nologin dali-bridge

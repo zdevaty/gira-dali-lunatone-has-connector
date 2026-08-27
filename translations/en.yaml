@@ -32,7 +32,7 @@ configuration:
       written. The bridge keeps working. This protects the disk Home Assistant
       itself runs on, which matters more than any capture.
   console:
-    name: Add-on log detail
+    name: App log detail
     description: >-
       quiet = alerts and light changes only (recommended: this log is on the
       same SD card). pretty = every frame. off = nothing.

@@ -10,29 +10,39 @@ there is no code path here that can send one.
 
 ## Installing and updating
 
-The repo root is the add-on directory, so it installs by cloning. From the
-Terminal add-on (`git` is already there):
+The repo root is the app directory, so it installs by cloning. `git` already
+ships in the Terminal app, and the folder Home Assistant shares for custom apps
+is still called `addons` even though the apps themselves are no longer called
+add-ons:
 
 ```sh
 git clone https://github.com/zdevaty/gira-dali-lunatone-has-connector /addons/dali_bridge
 ```
 
-Then **Settings → Add-ons → Add-on Store → ⋮ → Check for updates**, and it
-appears under *Local add-ons*.
+Then **Settings → Apps → App store** (bottom right) **→ ⋮ → Check for updates**.
+It appears under **Local apps**. Or from the terminal:
+
+```sh
+ha store reload          # the same as "Check for updates"
+ha apps install local_dali_bridge
+```
 
 To update later:
 
 ```sh
 cd /addons/dali_bridge && git pull
+ha apps rebuild local_dali_bridge
 ```
 
-Bump `version` in `config.yaml` if it did not change in the pull, then click
-**Update** on the add-on page. A rebuild takes a minute or two on a Pi 4.
+`ha apps` also takes `logs`, `restart`, `info` and `stats`, all with the same
+slug. The old `ha addons` spelling still works as an alias. From the UI, bump
+`version` in `config.yaml` and the app page shows an **Update** button instead.
+A rebuild takes a minute or two on a Pi 4.
 
 ## First run
 
 1. Set **Gateway address** to the gateway's IP and leave **Control the lights**
-   off. Start the add-on and read the log: you should see `connection connected`
+   off. Start the app and read the log: you should see `connection connected`
    and then frames as lights change.
 2. Turn a knob. You will see `unmapped_device short6` — that is how you learn
    which address belongs to which room, since DALI hands addresses out at
@@ -63,7 +73,7 @@ in a flat is worse than a missing value. Leave it `null` and the bridge measures
 it from its own calls, then tells you what it found.
 
 A malformed entry disables that one knob and is reported. It does not stop the
-add-on: refusing to start would disable every knob in the building instead of one.
+app: refusing to start would disable every knob in the building instead of one.
 
 ## What the log tells you
 
@@ -85,18 +95,18 @@ JSONL, one line per frame, in `/data/logs`, rotated daily and gzipped after a
 day. They are **excluded from Home Assistant backups** on purpose — they are
 large and change constantly.
 
-`/data` is deleted if you uninstall the add-on. Copy anything worth keeping to
+`/data` is deleted if you uninstall the app. Copy anything worth keeping to
 `/share` first.
 
-If the disk gets tight the add-on stops capturing frames and keeps bridging.
+If the disk gets tight the app stops capturing frames and keeps bridging.
 Protecting the disk Home Assistant runs on matters more than any capture.
 
 ## If the lights stop responding
 
-The bridge is one link in a long chain: knob → bus → gateway → this add-on →
+The bridge is one link in a long chain: knob → bus → gateway → this app →
 Home Assistant → gateway → bus → driver. Two things worth knowing:
 
 - **While Home Assistant is restarting, the knobs are dead.** Nothing here can
   change that; the only path to the lights is through HA.
-- If the add-on log has stopped entirely, check the gateway is reachable. The
+- If the app log has stopped entirely, check the gateway is reachable. The
   bridge retries forever and says `connection disconnected` each time.
