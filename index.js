@@ -12,6 +12,11 @@ import { startWatchdog } from './lib/watchdog.js';
 import { acquireLock } from './lib/lock.js';
 import { applyAddonOptions, applySupervisorEnvironment } from './lib/options.js';
 import { createGatewayLiveness } from './lib/liveness.js';
+import { createDeviceStore } from './lib/devices.js';
+import { createRing } from './lib/ring.js';
+import { createHealth } from './lib/health.js';
+import { createCensus } from './lib/census.js';
+import { createUiServer } from './lib/ui/server.js';
 
 const MAX_BACKOFF_MS = 60_000;
 // How long a link must hold before its backoff is forgiven. A gateway that
@@ -28,57 +33,6 @@ const { version: VERSION } = createRequire(import.meta.url)('./package.json');
 function fatal(...lines) {
   for (const line of lines) console.error(line);
   process.exit(1);
-}
-
-function loadDeviceMap(filePath) {
-  // Never fatal, deliberately.
-  //
-  // A fresh install has no device map at all, and a corrupt one leaves every
-  // knob dead either way -- but refusing to start also stops the daemon telling
-  // anyone WHICH addresses need mapping, which is the one thing it can do at
-  // that moment. It logs `unmapped_device` for each knob someone turns, and that
-  // list is how the map gets written in the first place.
-  let raw;
-  try {
-    raw = fs.readFileSync(filePath, 'utf8');
-  } catch (err) {
-    return { map: {}, problems: [`could not read DEVICE_MAP at ${filePath}: ${err.message}`] };
-  }
-
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    return { map: {}, problems: [`DEVICE_MAP at ${filePath} is not valid JSON: ${err.message}`] };
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { map: {}, problems: [`DEVICE_MAP at ${filePath} must be a JSON object keyed by short address`] };
-  }
-
-  const map = {};
-  const problems = [];
-  for (const [address, entry] of Object.entries(parsed)) {
-    // Skip the bad one, keep the rest: one malformed entry disables one knob,
-    // where refusing the whole file disables every knob in the building.
-    if (!/^\d+$/.test(address)) {
-      problems.push(`entry "${address}" is not a short address and was skipped`);
-      continue;
-    }
-    if (!entry || typeof entry.entity !== 'string' || entry.entity === '') {
-      problems.push(`entry "${address}" has no "entity" and was skipped`);
-      continue;
-    }
-    map[address] = {
-      entity: entry.entity,
-      min_kelvin: Number(entry.min_kelvin) || 2700,
-      max_kelvin: Number(entry.max_kelvin) || 6500,
-      // Which control-gear address on the bus this knob's light answers to. No default:
-      // the two address spaces are commissioned independently, so any guess is a
-      // coincidence at best. Left null, the daemon measures it instead of assuming.
-      gear: typeof entry.gear === 'string' ? entry.gear : null,
-    };
-  }
-  return { map, problems };
 }
 
 // The speed curve is four numbers because the encoder resolves exactly four speeds.
@@ -107,8 +61,10 @@ function loadConfig() {
   }
 
   const controlEnabled = !['false', '0', 'no'].includes(String(process.env.CONTROL_ENABLED ?? 'true').toLowerCase());
-  let deviceMap = {};
-  let deviceMapProblems = [];
+  // Loaded whether or not control is enabled: building the map is exactly what
+  // you do while control is OFF, so tying the two together would mean the
+  // commissioning page had nothing to show and nowhere to save.
+  const deviceMapPath = process.env.DEVICE_MAP || null;
   if (controlEnabled) {
     if (!process.env.HA_TOKEN) {
       fatal(
@@ -122,9 +78,6 @@ function loadConfig() {
         'Point it at a JSON file mapping control-device short addresses to HA entities.',
       );
     }
-    const loaded = loadDeviceMap(process.env.DEVICE_MAP);
-    deviceMap = loaded.map;
-    deviceMapProblems = loaded.problems;
   }
 
   return {
@@ -133,8 +86,7 @@ function loadConfig() {
     cctBurstMinSamples: Number(process.env.CCT_BURST_MIN_SAMPLES) || 8,
     cctSpanThreshold: Number(process.env.CCT_SPAN_THRESHOLD) || 40,
     controlEnabled,
-    deviceMap,
-    deviceMapProblems,
+    deviceMapPath,
     haUrl: process.env.HA_URL || 'http://localhost:8123',
     haToken: process.env.HA_TOKEN,
     flushMs: Number(process.env.FLUSH_MS) || 200,
@@ -153,6 +105,9 @@ function loadConfig() {
     gatewayProbePath: process.env.GATEWAY_PROBE_PATH || '/info',
     gatewayProbeMs: Number(process.env.GATEWAY_PROBE_MS ?? 30_000),
     gatewayIdleMs: Number(process.env.GATEWAY_IDLE_MS ?? 120_000),
+    uiEnabled: !['false', '0', 'no'].includes(String(process.env.UI ?? 'true').toLowerCase()),
+    uiPort: Number(process.env.UI_PORT ?? 8099),
+    uiBind: process.env.UI_BIND || null,
   };
 }
 
@@ -272,6 +227,10 @@ function formatConsoleLine(event) {
       return `${time}  start  v${event.version} on ${event.host} (node ${event.node}, ${event.tz}) gateway=${event.gateway} control=${event.control} logs=${event.log_dir} [${event.log_frames}]`;
     case 'log':
       return `${time}  logs   ${event.action} ${event.file}${event.reason ? ` (${event.reason})` : ''}`;
+    case 'ui':
+      return `${time}  web    ${event.status} on ${event.bind}:${event.port} (${event.restricted_to})`;
+    case 'devices':
+      return `${time}  map    ${event.action}: ${event.devices} device${event.devices === 1 ? '' : 's'}${event.problems ? `, ${event.problems} problem(s)` : ''}`;
     case 'gateway':
       return `${time}  gw     ${event.name} ${event.version} (${event.lines} line${event.lines === 1 ? '' : 's'}, tier ${event.tier})`;
     case 'discover': {
@@ -325,6 +284,30 @@ function main() {
     log: (event) => emit(event),
   });
 
+  // Declared before emit(), which broadcasts to it as events happen.
+  let ui = null;
+
+  // Observability. All bounded, all read-only from the UI's point of view.
+  const ring = createRing(Number(process.env.UI_RING ?? 2000));
+  const census = createCensus();
+  const health = createHealth({
+    version: VERSION,
+    runtime: supervised ? 'ha-app' : 'standalone',
+    controlEnabled: config.controlEnabled,
+  });
+  health.start();
+
+  // The map lives in a file a person edits, by hand or through the UI, so it is
+  // loaded here rather than parsed once during config validation.
+  const deviceStore = config.deviceMapPath
+    ? createDeviceStore({
+        file: config.deviceMapPath,
+        log: (event) => emit(event),
+        onChange: (map) => controller?.setDeviceMap(map),
+      })
+    : null;
+  const loadedDevices = deviceStore ? deviceStore.load() : { map: {}, problems: [] };
+
   const decoder = createDecoder();
   const anomaly = createAnomalyDetector({
     burstMinSamples: config.cctBurstMinSamples,
@@ -335,6 +318,17 @@ function main() {
     const event = { ts: new Date(tsMs).toISOString(), ...partialEvent };
     if (wantPrinted(config.consoleLevel, event.kind)) console.log(formatConsoleLine(event));
     if (wantLogged(config.logFrames, event.kind)) store.write(event, tsMs);
+
+    // Everything below is best-effort observability. None of it may throw into
+    // the frame path, which is also the wall-switch path.
+    try {
+      health.noteEvent(event);
+      census.note(event);
+      const seq = ring.push(event);
+      ui?.broadcast(seq, event);
+    } catch {
+      // A viewer or a counter is never worth a dropped gesture.
+    }
     return event;
   }
 
@@ -361,7 +355,7 @@ function main() {
   });
 
   // Loud, but not fatal. See loadDeviceMap.
-  for (const problem of config.deviceMapProblems) {
+  for (const problem of loadedDevices.problems) {
     emit({
       kind: 'alert', alert: 'device_map_problem', problem,
       note: 'the bridge is running; the affected knobs will report unmapped_device when someone turns them',
@@ -408,6 +402,8 @@ function main() {
     emit({ kind: 'connection', status: 'shutdown', signal });
     watchdog.stop();
     liveness.stop();
+    health.stop();
+    await ui?.stop().catch(() => {});
     // Bounded: the Supervisor sends SIGKILL ten seconds after SIGTERM, and a
     // hung Home Assistant call must not spend that budget.
     await Promise.race([
@@ -427,7 +423,7 @@ function main() {
 
   const controller = config.controlEnabled
     ? createController({
-        deviceMap: config.deviceMap,
+        deviceMap: { ...loadedDevices.map },
         ha,
         log: emit,
         flushMs: config.flushMs,
@@ -456,7 +452,7 @@ function main() {
   // writes to the bus: each probe is a Home Assistant call, and the bus is only watched.
   const discovery =
     config.controlEnabled && config.discoverGear
-      ? createGearDiscovery({ ha, deviceMap: config.deviceMap, log: emit })
+      ? createGearDiscovery({ ha, deviceMap: deviceStore ? deviceStore.get() : {}, log: emit })
       : null;
 
   // One frame must never be able to take the bridge down. It has happened once
@@ -623,8 +619,32 @@ function main() {
   // never fatal: logging the bus is useful on its own, and HA may come back later.
   liveness.start();
 
+  // The web UI. Under the Supervisor it listens on the app network and accepts
+  // ONLY the ingress proxy: Home Assistant has already authenticated whoever
+  // reaches it, and no browser can reach the port directly. Standalone it binds
+  // loopback, because there is no such gate.
+  if (config.uiEnabled) {
+    ui = createUiServer({
+      port: config.uiPort,
+      bind: config.uiBind ?? (supervised ? '0.0.0.0' : '127.0.0.1'),
+      allowFrom: supervised ? '172.30.32.2' : null,
+      ring,
+      health,
+      census,
+      liveness,
+      store,
+      ha,
+      devices: deviceStore,
+      log: emit,
+    });
+    ui.start().catch((err) =>
+      emit({ kind: 'alert', alert: 'ui_server_failed', error: String(err?.message ?? err),
+        note: 'the web UI is unavailable; the bridge itself is unaffected' }),
+    );
+  }
+
   if (ha) {
-    ha.preflight(config.deviceMap)
+    ha.preflight(deviceStore ? deviceStore.get() : {})
       .then((ok) => {
         if (!ok) {
           console.error('dali-logger: Home Assistant preflight FAILED — see the alerts above.');

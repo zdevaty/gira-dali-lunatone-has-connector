@@ -10,7 +10,7 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.3.0"
+version: "0.4.0"
 slug: dali_bridge
 description: >-
   Read-only DALI bus monitor and Gira rotary bridge for a Lunatone DALI-2 IoT
@@ -61,16 +61,20 @@ environment:
   # the Pi until Home Assistant suffers with it.
   NODE_OPTIONS: "--max-old-space-size=128"
 
-# --- Phase 3, with the web UI ---
-# ingress: true
-# ingress_port: 8099
-# ingress_stream: true          # server-sent events must not be buffered
-# panel_icon: mdi:lightbulb-group
-# panel_title: DALI
-# panel_admin: true
+# The web UI, in the Home Assistant sidebar. Home Assistant has already
+# authenticated whoever reaches it, and the app accepts connections only from
+# the ingress proxy (172.30.32.2), so the port is never reachable from the LAN.
+ingress: true
+ingress_port: 8099
+ingress_stream: true          # the live view is server-sent events; do not buffer them
+panel_icon: mdi:lightbulb-group
+panel_title: DALI
+panel_admin: true
+
 # Reports OUR liveness only. It must never fail because Home Assistant or the
-# gateway is down: restarting us would fix neither and would cost switch time.
-# watchdog: http://[HOST]:[PORT:8099]/api/alive
+# gateway is down: restarting us would fix neither and would cost wall-switch
+# availability to do it.
+watchdog: http://[HOST]:[PORT:8099]/api/alive
 
 options:
   # null, not "" -- an option with no default is mandatory, so the Supervisor

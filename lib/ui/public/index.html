@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DALI Bridge</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="pills">
+    <span class="pill" id="pill-bus"><i></i><b>bus</b><span id="bus-detail">—</span></span>
+    <span class="pill" id="pill-ha"><i></i><b>HA</b><span id="ha-detail">—</span></span>
+    <span class="pill" id="pill-bridge"><i></i><b>bridge</b><span id="bridge-detail">—</span></span>
+  </div>
+  <div class="meta"><span id="version">—</span> · <span id="uptime">—</span></div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab is-on" data-panel="now" role="tab">Now</button>
+  <button class="tab" data-panel="commission" role="tab">Commission</button>
+  <button class="tab" data-panel="health" role="tab">Health</button>
+</nav>
+
+<main>
+  <!-- ── Now ───────────────────────────────────────────────────────────── -->
+  <section class="panel is-on" id="panel-now">
+    <div class="controls">
+      <div class="chips" id="filters">
+        <button class="chip is-on" data-kinds="">Everything</button>
+        <button class="chip" data-kinds="inputEvent">Knobs</button>
+        <button class="chip" data-kinds="level,colour">Lights</button>
+        <button class="chip" data-kinds="control">Sent to HA</button>
+        <button class="chip" data-kinds="alert,connection">Alerts</button>
+      </div>
+      <button class="btn" id="pause">Pause</button>
+    </div>
+    <div class="stream" id="stream" aria-live="polite"></div>
+    <p class="hint" id="stream-hint">Waiting for the bus…</p>
+  </section>
+
+  <!-- ── Commission ────────────────────────────────────────────────────── -->
+  <section class="panel" id="panel-commission">
+    <div class="lede">
+      <p><b>Walk the flat and turn each knob.</b> The controller that just spoke
+      jumps to the top and flashes. Give it the light it should drive, then move
+      to the next room.</p>
+      <p class="hint">DALI hands out addresses in no particular order at
+      commissioning time, so this is the only way to learn which is which.</p>
+    </div>
+
+    <div class="empty" id="commission-empty">
+      Nothing has spoken on the bus yet. Turn a knob.
+    </div>
+
+    <div id="devices"></div>
+
+    <div class="savebar" id="savebar" hidden>
+      <span id="dirty-count"></span>
+      <button class="btn btn-primary" id="save">Save map</button>
+      <button class="btn" id="revert">Discard</button>
+    </div>
+
+    <details class="drawer" id="gear-drawer">
+      <summary>Drivers seen on the bus <span class="count" id="gear-count"></span></summary>
+      <p class="hint">The other address space. A driver only appears once its
+      light changes — ask Home Assistant to turn a light on and watch which one
+      answers.</p>
+      <div id="gear-list"></div>
+    </details>
+
+    <p class="hint" id="devices-file"></p>
+  </section>
+
+  <!-- ── Health ────────────────────────────────────────────────────────── -->
+  <section class="panel" id="panel-health">
+    <div class="cards" id="health-cards"></div>
+    <details class="drawer">
+      <summary>Everything</summary>
+      <pre id="health-raw"></pre>
+    </details>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

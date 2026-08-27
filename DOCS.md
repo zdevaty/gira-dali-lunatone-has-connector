@@ -39,6 +39,26 @@ slug. The old `ha addons` spelling still works as an alias. From the UI, bump
 `version` in `config.yaml` and the app page shows an **Update** button instead.
 A rebuild takes a minute or two on a Pi 4.
 
+## The DALI panel
+
+Once the app is running there is a **DALI** entry in the Home Assistant sidebar.
+No extra login: Home Assistant has already authenticated you, and the app
+accepts connections only from the ingress proxy, so the port is never reachable
+from your network.
+
+- **Now** — everything on the bus as it happens, with filters for knobs, lights,
+  what was sent to Home Assistant, and alerts.
+- **Commission** — the point of the panel. Walk the flat and turn each knob; the
+  controller that just spoke jumps to the top and flashes. Give it the light it
+  should drive and move on. Saving applies immediately, with no restart.
+- **Health** — uptime, frame rate, memory, event-loop lag, reconnects, capture
+  size, and the gateway's own firmware and bus state.
+
+The **Driver** field on each controller can be left alone. It is the control
+gear address that room's light answers to, and the bridge measures it from its
+own calls rather than guessing — the two address spaces are numbered
+independently, so a knob at A0 says nothing about which driver its light uses.
+
 ## First run
 
 1. Set **Gateway address** to the gateway's IP and leave **Control the lights**

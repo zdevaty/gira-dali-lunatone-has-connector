@@ -872,3 +872,48 @@ test('settled() still waits for everything in the queue', async () => {
   await h.controller.settled();
   assert.ok(brightnessCalls(h.calls).length >= 2, 'nothing was left in flight');
 });
+
+// --- Hot-reloading the device map -------------------------------------------
+
+test('a saved device map takes effect without a restart', async () => {
+  const h = makeHarness({ deviceMap: {} });
+  await h.feed([gen('start_right'), abs(0), abs(25)]);
+  assert.equal(h.calls.length, 0, 'nothing mapped, so nothing sent');
+  assert.equal(h.logs.filter((e) => e.alert === 'unmapped_device').length, 1);
+
+  h.controller.setDeviceMap({ 0: { entity: 'light.obyvak', min_kelvin: 2700, max_kelvin: 6500, gear: 'short7' } });
+
+  await h.feed([gen('start_right'), abs(50), abs(75)]);
+  assert.ok(brightnessCalls(h.calls).length >= 1, 'the same knob now drives its light');
+  assert.equal(h.calls.at(-1).entity_id, 'light.obyvak');
+});
+
+test('hot reload re-indexes gear, so bus levels reach the right device', async () => {
+  const h = makeHarness({ deviceMap: mappedTo('short7'), levelDivergence: 20, brightness: 128 });
+  h.controller.setDeviceMap({ 0: { entity: 'light.obyvak', min_kelvin: 2700, max_kelvin: 6500, gear: 'short9' } });
+
+  // A level on the OLD gear must no longer be attributed to this device.
+  h.controller.observeLevel('short7', 5);
+  await h.feed([gen('start_right'), abs(0), abs(25)]);
+  await h.settle();
+  assert.equal(h.logs.filter((e) => e.alert === 'ha_brightness_divergence').length, 0);
+
+  // A level on the new one must be. Advance past the flush window first: the
+  // throttle is measured from the previous gesture's flush, not from zero.
+  h.advance(500);
+  h.controller.observeLevel('short9', 5);
+  await h.feed([gen('start_left'), abs(50), abs(25)]);
+  await h.settle();
+  assert.equal(h.logs.filter((e) => e.alert === 'ha_brightness_divergence').length, 1);
+});
+
+test('an unmapped knob is reported again after the map changes', async () => {
+  const h = makeHarness({ deviceMap: {} });
+  await h.feed([btn('short_press')]);
+  h.controller.setDeviceMap({ 6: { entity: 'light.x', min_kelvin: 2700, max_kelvin: 6500 } });
+  await h.feed([btn('short_press')]);
+  assert.equal(
+    h.logs.filter((e) => e.alert === 'unmapped_device').length, 2,
+    'the map changed, so the old "already told you" no longer applies',
+  );
+});
