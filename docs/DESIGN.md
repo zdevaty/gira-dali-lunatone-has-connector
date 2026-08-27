@@ -531,8 +531,28 @@ thing installs with a clone. From the Terminal app (`git` ships in it):
 git clone https://github.com/zdevaty/gira-dali-lunatone-has-connector /addons/dali_bridge
 ```
 
-Then App store → ⋮ Check for updates → *Local apps*. Updating is
-`git pull` in that directory, bump `version` in `config.yaml`, then Update.
+Then App store → ⋮ Check for updates → *Local apps*.
+
+**Updating is three steps, and the middle one is not optional.** Confirmed the
+hard way on the first real deployment: after `git pull` and `ha apps rebuild`
+the Apps page still showed the old version and the new ingress panel never
+appeared.
+
+```sh
+cd /addons/dali_bridge && git pull   # new source
+ha store reload                      # the Supervisor re-reads config.yaml
+ha apps update local_dali_bridge     # install the version it just found
+```
+
+`ha apps rebuild` rebuilds the image from whatever source is on disk, but the
+Supervisor's picture of an app — its version, whether it has an ingress panel,
+what options it takes — comes from a store index that only `ha store reload`
+refreshes. Skipping it leaves a container running new code while Home Assistant
+still describes the old manifest, and **nothing anywhere reports an error**.
+
+That silence is what makes it worth a script rather than a line in a README:
+`update.sh` at the repo root runs all three and prints the installed version
+back, so a stale index is visible instead of inferred.
 
 The alternative — publishing this as an app *repository* (a `repository.yaml`
 at the root, app in a subdirectory) so the Supervisor clones and updates it
