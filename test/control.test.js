@@ -969,3 +969,77 @@ test('an unchanged entry keeps what was measured about it', async () => {
     'the untouched room still believes the bus over Home Assistant',
   );
 });
+
+// --- When Home Assistant cannot keep up ------------------------------------
+
+test('the bus is believed when Home Assistant cannot say what the brightness is', async () => {
+  // The failure this encodes, from the real installation: a knob held against
+  // its end stop rammed HA with five calls a second until it timed out. A timed
+  // out getLightBrightness returns null, which took the ceiling check out of
+  // play -- so every further step was still sent, and the timeouts kept the
+  // brightness unknown, so it never stopped. The bus said level 254 throughout.
+  const h = makeHarness({ deviceMap: mappedTo('short0') });
+  h.controller.observeLevel('short0', 254);
+
+  const ha = {
+    getLightKelvin: async () => 4000,
+    getLightBrightness: async () => null, // HA timed out
+    callService: async () => true,
+  };
+  const h2 = makeHarness({ ha, deviceMap: mappedTo('short0'), flushMs: 0 });
+  h2.controller.observeLevel('short0', 254);
+
+  await h2.feed([gen('start_right'), abs(0), abs(80), abs(160)]);
+  await h2.settle();
+
+  assert.equal(
+    h2.logs.filter((e) => e.action === 'brightness_suppressed' && e.reason === 'already at maximum').length > 0,
+    true,
+    'the ceiling still holds when only the bus can say where the light is',
+  );
+});
+
+test('repeated Home Assistant failures slow the call rate down', async () => {
+  let ok = false;
+  const calls = [];
+  const ha = {
+    getLightKelvin: async () => 4000,
+    getLightBrightness: async () => 128,
+    callService: async (d, s, body) => { calls.push(body); return ok; },
+  };
+  const h = makeHarness({ ha, deviceMap: mappedTo('short0'), flushMs: 200, maxBackoffMs: 2000 });
+
+  // Every call fails. Each flush should be further from the last than the one
+  // before it, rather than hammering a service that is timing out.
+  // Advance past the growing interval each time, or the deferred flushes never
+  // fire and the throttle is never exercised.
+  for (let i = 0; i < 6; i++) {
+    await h.feed([gen('start_right'), abs(i * 30), abs(i * 30 + 25)]);
+    await h.advance(2500);
+  }
+  const during = calls.length;
+
+  const slow = h.logs.filter((e) => e.alert === 'ha_slow');
+  assert.equal(slow.length, 1, 'said so once, not once per failure');
+  assert.ok(slow[0].backoff_ms >= 400, `backed off to ${slow[0].backoff_ms} ms`);
+
+  // Recovery: once HA answers again the rate returns.
+  ok = true;
+  const before = calls.length;
+  for (let i = 0; i < 6; i++) {
+    await h.feed([gen('start_right'), abs(200 + i * 5), abs(205 + i * 5)]);
+    await h.advance(2500);
+  }
+  assert.ok(calls.length - before > 0, 'and it starts working again');
+  assert.ok(during > 0, 'it never stopped trying entirely');
+});
+
+test('a healthy Home Assistant is never throttled', async () => {
+  const h = makeHarness({ deviceMap: mappedTo('short0'), flushMs: 200 });
+  for (let i = 0; i < 5; i++) {
+    await h.feed([gen('start_right'), abs(i * 30), abs(i * 30 + 25)]);
+    await h.advance(250);
+  }
+  assert.equal(h.logs.filter((e) => e.alert === 'ha_slow').length, 0);
+  assert.ok(brightnessCalls(h.calls).length >= 4, 'full rate throughout');
+});

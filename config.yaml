@@ -10,7 +10,7 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.4.1"
+version: "0.4.2"
 slug: dali_bridge
 description: >-
   Read-only DALI bus monitor and Gira rotary bridge for a Lunatone DALI-2 IoT
