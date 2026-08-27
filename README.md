@@ -514,9 +514,20 @@ ha apps install local_dali_bridge
 ```
 
 Or **Settings → Apps → App store → ⋮ → Check for updates**, then pick it from
-**Local apps**. To update: `git pull` there and `ha apps rebuild
-local_dali_bridge`. For a non-HAOS install there is a systemd unit in
-`deploy/systemd/`.
+**Local apps**.
+
+To update, all three steps matter:
+
+```sh
+cd /addons/dali_bridge && git pull   # new source
+ha store reload                      # the Supervisor re-reads config.yaml
+ha apps update local_dali_bridge     # install the version it just found
+```
+
+`ha apps rebuild` alone rebuilds the image but leaves the Supervisor's store
+index stale, so the Apps page keeps describing the old manifest and anything the
+update added to `config.yaml` — an ingress panel, a new option — never takes
+effect. For a non-HAOS install there is a systemd unit in `deploy/systemd/`.
 
 The daemon is the wall switches now — with the controllers out of
 application-controller mode, nothing else on the bus reacts to the knobs. That

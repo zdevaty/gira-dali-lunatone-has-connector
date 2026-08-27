@@ -27,17 +27,28 @@ ha store reload          # the same as "Check for updates"
 ha apps install local_dali_bridge
 ```
 
-To update later:
+To update later — **all three steps**:
 
 ```sh
-cd /addons/dali_bridge && git pull
-ha apps rebuild local_dali_bridge
+cd /addons/dali_bridge && git pull   # 1. new source
+ha store reload                      # 2. the Supervisor re-reads config.yaml
+ha apps update local_dali_bridge     # 3. install the version it just found
 ```
 
-`ha apps` also takes `logs`, `restart`, `info` and `stats`, all with the same
-slug. The old `ha addons` spelling still works as an alias. From the UI, bump
-`version` in `config.yaml` and the app page shows an **Update** button instead.
-A rebuild takes a minute or two on a Pi 4.
+Step 2 is the one that is easy to miss. `ha apps rebuild` rebuilds the image
+from whatever source is on disk, but the Supervisor's idea of the app — its
+version, whether it has an ingress panel, what its options are — comes from a
+store index that only `ha store reload` refreshes. Skip it and you get a
+container running new code while the Apps page still describes the old manifest,
+and anything the update added to config.yaml never takes effect.
+
+If step 3 reports nothing to update, the store index is still stale; run
+`ha apps info local_dali_bridge` and check the version it reports against
+`grep '^version:' /addons/dali_bridge/config.yaml`.
+
+`ha apps` also takes `logs`, `restart`, `rebuild`, `info` and `stats`, all with
+the same slug. The old `ha addons` spelling still works as an alias. A rebuild
+takes a minute or two on a Pi 4.
 
 ## The DALI panel
 
