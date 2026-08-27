@@ -516,7 +516,8 @@ ha apps install local_dali_bridge
 Or **Settings → Apps → App store → ⋮ → Check for updates**, then pick it from
 **Local apps**.
 
-To update, all three steps matter:
+To update, `sh /addons/dali_bridge/update.sh`, or by hand — all three steps
+matter:
 
 ```sh
 cd /addons/dali_bridge && git pull   # new source

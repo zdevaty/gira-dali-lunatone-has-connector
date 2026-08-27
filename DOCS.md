@@ -27,7 +27,14 @@ ha store reload          # the same as "Check for updates"
 ha apps install local_dali_bridge
 ```
 
-To update later — **all three steps**:
+To update later, one command does all of it and prints back what ended up
+installed:
+
+```sh
+sh /addons/dali_bridge/update.sh
+```
+
+Or by hand — **all three steps**:
 
 ```sh
 cd /addons/dali_bridge && git pull   # 1. new source
