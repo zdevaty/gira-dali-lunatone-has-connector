@@ -10,7 +10,7 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.2.0"
+version: "0.2.1"
 slug: dali_bridge
 description: >-
   Read-only DALI bus monitor and Gira rotary bridge for a Lunatone DALI-2 IoT
@@ -50,7 +50,6 @@ backup_exclude:
   - logs/**
 
 environment:
-  LOG_DIR: /data/logs
   DEVICE_MAP: /data/devices.json
   # Bounded on purpose: if this leaks it should die and be restarted, not swap
   # the Pi until Home Assistant suffers with it.
@@ -73,14 +72,23 @@ options:
   # exit 1 immediately, and ten of those in half an hour is a Supervisor alert.
   gateway_host: null
   control_enabled: false
+  # /data is private to this app, so nothing else can read the captures until
+  # the web UI can serve them. Point this at /share/dali-bridge to inspect them
+  # from the Terminal or Samba apps -- at the cost of them landing in every full
+  # Home Assistant backup, which /data does not.
+  log_dir: /data/logs
   log_frames: all
   log_retention_days: 30
   log_max_mb: 512
   log_min_free_mb: 256
-  console: quiet
+  # `pretty` by default: this is a debugging tool first, and a first run that
+  # prints nothing is indistinguishable from a broken one. `quiet` drops the
+  # per-frame bus traffic once it is just running.
+  console: pretty
 
 schema:
   gateway_host: str
+  log_dir: str
   control_enabled: bool
   log_frames: "list(all|decoded|events|alerts)"
   log_retention_days: "int(0,3650)"

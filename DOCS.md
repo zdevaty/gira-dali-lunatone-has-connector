@@ -42,12 +42,30 @@ A rebuild takes a minute or two on a Pi 4.
 ## First run
 
 1. Set **Gateway address** to the gateway's IP and leave **Control the lights**
-   off. Start the app and read the log: you should see `connection connected`
-   and then frames as lights change.
-2. Turn a knob. You will see `unmapped_device short6` — that is how you learn
-   which address belongs to which room, since DALI hands addresses out at
-   commissioning time in no particular order.
-3. Write `/data/devices.json` (see below), then switch **Control the lights** on.
+   off. Start the app and read the log. Within a second or two you should see:
+
+   ```
+   start  v0.2.1 on ... gateway=10.0.0.230 control=false ...
+   connection connected
+   gw     DALI-2 IoT v1.18.7/1.4.6 (1 line, tier plus)
+   ```
+
+   That third line is the one that matters: it means the app reached the gateway
+   over HTTP as well as the bus socket. If it is missing, the gateway address is
+   wrong or unreachable from the container.
+
+2. Turn a knob. With **App log detail** on `pretty` you will see the raw gesture:
+   `generic start_right`, then a stream of `absoluteInput value=...` as the
+   counter moves. Note the address in front of them — `A6` and so on. That is
+   how you learn which knob is which, since DALI hands addresses out in no
+   particular order at commissioning time.
+
+   On `quiet` you still see the knob turns, but not the arc levels and colour
+   frames underneath them.
+
+3. Write `/data/devices.json` (see below) using the addresses you just collected,
+   then switch **Control the lights** on. From then on an unmapped knob reports
+   `unmapped_device` once per address.
 
 ## devices.json
 
@@ -91,9 +109,17 @@ app: refusing to start would disable every knob in the building instead of one.
 
 ## Captures
 
-JSONL, one line per frame, in `/data/logs`, rotated daily and gzipped after a
-day. They are **excluded from Home Assistant backups** on purpose — they are
-large and change constantly.
+JSONL, one line per frame, rotated daily and gzipped after a day.
+
+By default they go to `/data/logs`, which is **excluded from Home Assistant
+backups** on purpose — they are large and change constantly. The catch is that
+`/data` is private to this app, so until the web UI can serve downloads nothing
+else can read them: not the Terminal app, not Samba.
+
+While you are actively debugging, set **Capture directory** to
+`/share/dali-bridge` instead. Then `cat /share/dali-bridge/dali-*.jsonl` works
+from the Terminal app. The cost is that they land in every full backup, so put
+it back to `/data/logs` when you are done.
 
 `/data` is deleted if you uninstall the app. Copy anything worth keeping to
 `/share` first.

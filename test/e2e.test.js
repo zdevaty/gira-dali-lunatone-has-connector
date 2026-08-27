@@ -265,3 +265,45 @@ test('a silent socket is reconnected while the gateway still answers HTTP', asyn
     { timeoutMs: 5000 },
   );
 });
+
+test('quiet console still shows what happened, just not every frame', async (t) => {
+  // The bug this guards: `quiet` was a hand-written allow-list that omitted
+  // startup, gateway and inputEvent, so an observe-only run printed one
+  // connection line and then nothing -- indistinguishable from a broken
+  // install, and reported as one on the first real deployment.
+  const gw = createFakeGateway();
+  const port = await gw.listen();
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-e2e-'));
+
+  const child = spawn(process.execPath, ['index.js'], {
+    env: {
+      ...process.env,
+      GATEWAY_IP: `127.0.0.1:${port}`,
+      LOG_DIR: dir,
+      CONTROL_ENABLED: 'false',
+      CONSOLE: 'quiet',
+      WATCHDOG: 'false',
+      GATEWAY_IDLE_MS: '600000',
+    },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  let out = '';
+  child.stdout.on('data', (d) => { out += String(d); });
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await gw.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  await waitFor(() => out.includes('connection connected'));
+
+  const hex = (str) => str.split(' ').map((b) => parseInt(b, 16));
+  gw.send(gw.monitor(24, hex('00 84 00'))); // someone turns a knob
+  gw.send(gw.monitor(16, hex('00 96')));    // and a light responds on the bus
+
+  await waitFor(() => out.includes('start_right'), { timeoutMs: 5000 });
+
+  assert.match(out, /start\s+v/, 'the build identifies itself');
+  assert.match(out, /generic start_right/, 'a knob being turned is not "every frame"');
+  assert.doesNotMatch(out, /level 150/, 'but the per-frame bus traffic is still suppressed');
+});

@@ -11,6 +11,13 @@ configuration:
       Off: watch and log the bus only, changing nothing. On: turn Gira knob
       gestures into Home Assistant calls. Leave this off for the first run so
       you can confirm the bus looks right before anything acts on it.
+  log_dir:
+    name: Capture directory
+    description: >-
+      Where the JSONL bus captures are written. /data/logs is private to this
+      app and stays out of Home Assistant backups, but nothing else can read it
+      until the web UI exists. Set /share/dali-bridge while debugging so you can
+      read the captures from the Terminal or Samba apps.
   log_frames:
     name: How much of the bus to capture
     description: >-

@@ -182,13 +182,17 @@ function wantLogged(level, kind) {
   }
 }
 
-// stdout goes to the add-on log, which is the same SD card. Printing every frame
-// writes the capture twice.
-const CONSOLE_ALWAYS = new Set(['alert', 'connection', 'control', 'preflight', 'discover', 'log']);
-
+// stdout goes to the app log, which is on the same card. `quiet` mirrors
+// LOG_FRAMES=events: everything the bridge did or noticed, including someone
+// turning a knob, but not the per-frame bus traffic underneath it.
+//
+// It used to be a hand-written allow-list that omitted `startup`, `gateway` and
+// `inputEvent`, so an observe-only run with control disabled printed one
+// connection line and then nothing at all -- which looks exactly like a broken
+// install, and was reported as one.
 function wantPrinted(level, kind) {
   if (level === 'off') return false;
-  if (level === 'quiet') return CONSOLE_ALWAYS.has(kind);
+  if (level === 'quiet') return !FRAME_KINDS.has(kind) || kind === 'inputEvent';
   return true;
 }
 
