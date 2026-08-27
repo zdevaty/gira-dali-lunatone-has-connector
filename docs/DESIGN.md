@@ -10,7 +10,7 @@ started from.
 | Phase | State |
 |---|---|
 | 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection (section 5). 147 tests, all offline. |
-| 2 — packaging | **Written, unbuilt.** `addon/` and `deploy/` exist; there is no Docker on the machine they were written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
+| 2 — packaging | **Written, unbuilt.** The repo root **is** the add-on (`config.yaml` + `Dockerfile` at top level), so it installs by cloning straight into `/addons`. There is no Docker on the machine it was written on, so the first build on the Pi is the real test. `ingress` and `watchdog` keys are deliberately left commented out until the UI exists behind them. |
 | 3 — web UI | Not started. |
 | 4 — setup features | Not started. |
 | 5 — cutover | Not started, no longer blocked: open question 2 is answered, so the Pi can run alongside the bench instance first. |
@@ -164,7 +164,10 @@ src/
   ui/
     server.js        node:http; routes; SSE
     public/          index.html, app.js, style.css — no build step
-addon/               config.yaml, Dockerfile, translations/, DOCS.md, icon.png
+config.yaml          add-on manifest -- the repo root IS the add-on directory
+Dockerfile           node:22-alpine; build context is the repo root
+DOCS.md              the add-on's Documentation tab
+translations/        friendly option labels for the add-on config UI
 deploy/systemd/      dali-bridge.service, install.sh
 docs/DESIGN.md       this file
 ```
@@ -521,9 +524,22 @@ the first build on the Pi records one.
 `translations/en.yaml` gives every option a friendly name and help text in the
 config UI. `DOCS.md` becomes the Documentation tab.
 
-**Getting it there**: copy into `/addons/dali_bridge` (Samba or SSH add-on) →
-Add-on Store → ⋮ Check for updates → *Local apps*. Updating is: bump `version`,
-re-copy, click Update. `deploy/push.sh` rsyncs from this repo over SSH.
+**Getting it there**: the manifest sits at the repo root precisely so the whole
+thing installs with a clone. From the Terminal add-on (`git` ships in it):
+
+```sh
+git clone https://github.com/zdevaty/gira-dali-lunatone-has-connector /addons/dali_bridge
+```
+
+Then Add-on Store → ⋮ Check for updates → *Local add-ons*. Updating is
+`git pull` in that directory, bump `version` in `config.yaml`, then Update.
+
+The alternative — publishing this as an add-on *repository* (a `repository.yaml`
+at the root, add-on in a subdirectory) so the Supervisor clones and updates it
+itself with no shell at all — was considered and deferred. The Docker build
+context is the add-on subdirectory, so it would force the entire application
+down one level and rewrite every test import for a one-click update button. Not
+worth it yet; revisit if updating becomes a chore.
 
 ### 11.2 systemd (fallback)
 

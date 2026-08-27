@@ -1,0 +1,15 @@
+# The Docker build context is the repo root now, so keep everything the image
+# does not need out of it. The captures alone are more than the source.
+.git
+.github
+logs
+test
+docs
+deploy
+README.md
+DOCS.md
+translations
+.gitignore
+.dockerignore
+.claude
+devices.json

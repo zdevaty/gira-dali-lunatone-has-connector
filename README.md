@@ -487,8 +487,11 @@ lib/watchdog.js     worker thread that kills a wedged process
 lib/lock.js         one instance per machine
 lib/liveness.js     read-only gateway probe; half-open socket detection
 lib/options.js      add-on / Supervisor runtime adapters
-addon/              Home Assistant add-on manifest, Dockerfile, docs
-deploy/             push.sh, and the systemd unit for non-HAOS installs
+config.yaml         add-on manifest -- the repo root IS the add-on directory
+Dockerfile          node:22-alpine; build context is the repo root
+DOCS.md             the add-on's Documentation tab in Home Assistant
+translations/       friendly option labels for the add-on config UI
+deploy/systemd/     the unit and install notes for non-HAOS installs
 docs/DESIGN.md      why it is put together this way, and what was rejected
 test/               built from real bus captures; plus a fake gateway on loopback
 ```
@@ -498,8 +501,18 @@ test/               built from real bus captures; plus a fake gateway on loopbac
 See [docs/DESIGN.md](docs/DESIGN.md). Short version: it becomes a Home Assistant
 add-on, which puts the UI in the HA sidebar behind HA's own login and removes
 the long-lived token entirely (`homeassistant_api: true` gets a scoped one from
-the Supervisor). `addon/` holds the manifest; `deploy/push.sh` copies it to the
-Pi. For a non-HAOS install there is a systemd unit in `deploy/systemd/`.
+the Supervisor).
+
+The manifest lives at the repo root so the add-on installs with a clone. From
+the Terminal add-on:
+
+```sh
+git clone https://github.com/zdevaty/gira-dali-lunatone-has-connector /addons/dali_bridge
+```
+
+then Add-on Store → ⋮ Check for updates → *Local add-ons*. To update: `git pull`
+there, bump `version` in `config.yaml`, click Update. For a non-HAOS install
+there is a systemd unit in `deploy/systemd/`.
 
 The daemon is the wall switches now — with the controllers out of
 application-controller mode, nothing else on the bus reacts to the knobs. That

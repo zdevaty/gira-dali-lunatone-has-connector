@@ -68,7 +68,10 @@ environment:
 # watchdog: http://[HOST]:[PORT:8099]/api/alive
 
 options:
-  gateway_host: ""
+  # null, not "" -- an option with no default is mandatory, so the Supervisor
+  # refuses to start the add-on until it is filled in. Empty would start and
+  # exit 1 immediately, and ten of those in half an hour is a Supervisor alert.
+  gateway_host: null
   control_enabled: false
   log_frames: all
   log_retention_days: 30

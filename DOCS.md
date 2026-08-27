@@ -8,6 +8,27 @@ monitor socket; every light change goes out through Home Assistant, which asks
 the gateway. One bad frame on a DALI bus can erase a device's commissioning, so
 there is no code path here that can send one.
 
+## Installing and updating
+
+The repo root is the add-on directory, so it installs by cloning. From the
+Terminal add-on (`git` is already there):
+
+```sh
+git clone https://github.com/zdevaty/gira-dali-lunatone-has-connector /addons/dali_bridge
+```
+
+Then **Settings → Add-ons → Add-on Store → ⋮ → Check for updates**, and it
+appears under *Local add-ons*.
+
+To update later:
+
+```sh
+cd /addons/dali_bridge && git pull
+```
+
+Bump `version` in `config.yaml` if it did not change in the pull, then click
+**Update** on the add-on page. A rebuild takes a minute or two on a Pi 4.
+
 ## First run
 
 1. Set **Gateway address** to the gateway's IP and leave **Control the lights**
