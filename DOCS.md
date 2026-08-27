@@ -69,8 +69,10 @@ A rebuild takes a minute or two on a Pi 4.
 
 ## devices.json
 
-Lives at `/data/devices.json`, so it survives updates and is included in Home
-Assistant backups. Keyed by the *control device* (knob) short address:
+Lives at `/config/devices.json` inside the app, which is
+`/addon_configs/local_dali_bridge/devices.json` on the host — so you can edit it
+from the Terminal app, the File editor or Samba, and it survives updates and is
+backed up. Keyed by the *control device* (knob) short address:
 
 ```json
 {

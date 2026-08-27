@@ -10,7 +10,7 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.2.2"
+version: "0.3.0"
 slug: dali_bridge
 description: >-
   Read-only DALI bus monitor and Gira rotary bridge for a Lunatone DALI-2 IoT
@@ -40,6 +40,12 @@ homeassistant_api: true
 # /data is always mapped and persists across restarts, updates and backups.
 # `share` is only here so a capture worth keeping can be exported out of /data.
 map:
+  # /config here is /addon_configs/local_dali_bridge on the host, which the
+  # Terminal and Samba apps can both see. devices.json lives there because it is
+  # a file a person edits -- /data is private to this app, so a device map kept
+  # there cannot be written at all.
+  - type: addon_config
+    read_only: false
   - type: share
     read_only: false
 
@@ -50,7 +56,7 @@ backup_exclude:
   - logs/**
 
 environment:
-  DEVICE_MAP: /data/devices.json
+  DEVICE_MAP: /config/devices.json
   # Bounded on purpose: if this leaks it should die and be restarted, not swap
   # the Pi until Home Assistant suffers with it.
   NODE_OPTIONS: "--max-old-space-size=128"
