@@ -195,3 +195,112 @@ test('an unknown API path is a 404, not a static file miss', async () => {
   assert.equal((await res.json()).error, 'no such endpoint');
   await h.cleanup();
 });
+
+// --- commissioning ----------------------------------------------------------
+
+function fakeDevices(initial = {}) {
+  let map = { ...initial };
+  let problems = [];
+  return {
+    file: '/config/devices.json',
+    get: () => map,
+    problems: () => problems,
+    async save(next) {
+      if (!next || typeof next !== 'object' || Array.isArray(next)) {
+        return { ok: false, problems: ['not an object'], map: null };
+      }
+      map = next;
+      problems = [];
+      return { ok: true, problems, map };
+    },
+  };
+}
+
+test('the commissioning page gets the map and everything seen on the bus', async () => {
+  const census = {
+    list: () => ({
+      devices: [{ address: 6, target: 'short6', frames: 12, last_seen_age_s: 1, last_event: 'start_right' }],
+      gear: [{ target: 'short11', addressable: true, frames: 4, last_level: 128 }],
+    }),
+  };
+  const h = await harness({ census, devices: fakeDevices({ 6: { entity: 'light.bedroom' } }) });
+
+  const body = await (await h.get('/api/devices')).json();
+  assert.equal(body.map['6'].entity, 'light.bedroom');
+  assert.equal(body.seen.devices[0].address, 6);
+  assert.equal(body.seen.devices[0].last_event, 'start_right', 'so the row can light up as you turn it');
+  assert.equal(body.seen.gear[0].target, 'short11');
+  assert.equal(body.file, '/config/devices.json', 'and where to edit it by hand');
+  await h.cleanup();
+});
+
+test('the entity picker lists lights from Home Assistant', async () => {
+  const h = await harness({
+    ha: {
+      isDown: () => false,
+      listLights: async () => [{ entity_id: 'light.bedroom', name: 'Bedroom', supports_color_temp: true }],
+    },
+  });
+  const body = await (await h.get('/api/entities')).json();
+  assert.equal(body.lights[0].entity_id, 'light.bedroom');
+  assert.equal(body.reachable, true);
+  await h.cleanup();
+});
+
+test('an unreachable Home Assistant gives an empty picker, not a broken page', async () => {
+  const h = await harness({ ha: { isDown: () => true, listLights: async () => [] } });
+  const body = await (await h.get('/api/entities')).json();
+  assert.deepEqual(body.lights, []);
+  assert.equal(body.reachable, false, 'and the page can say why it is empty');
+  await h.cleanup();
+});
+
+test('saving the map goes through validation and reports what it rejected', async () => {
+  const h = await harness({ devices: fakeDevices() });
+
+  const ok = await h.get('/api/devices', {
+    method: 'PUT',
+    headers: { 'x-dali-ui': '1', 'content-type': 'application/json' },
+    body: JSON.stringify({ 6: { entity: 'light.bedroom' } }),
+  });
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).map['6'].entity, 'light.bedroom');
+
+  const bad = await h.get('/api/devices', {
+    method: 'PUT',
+    headers: { 'x-dali-ui': '1' },
+    body: '[1,2,3]',
+  });
+  assert.equal(bad.status, 400);
+  await h.cleanup();
+});
+
+test('a malformed body is a clear 400, not a stack trace', async () => {
+  const h = await harness({ devices: fakeDevices() });
+  const res = await h.get('/api/devices', {
+    method: 'PUT', headers: { 'x-dali-ui': '1' }, body: '{ not json',
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /not valid JSON/);
+  await h.cleanup();
+});
+
+test('an oversized body is refused rather than buffered', async () => {
+  // This runs in the process that drives the wall switches; an unbounded read
+  // here would be a way to grow its memory from outside.
+  const h = await harness({ devices: fakeDevices() });
+  const res = await h.get('/api/devices', {
+    method: 'PUT', headers: { 'x-dali-ui': '1' }, body: 'x'.repeat(400 * 1024),
+  }).catch((err) => ({ status: 0, err }));
+  assert.notEqual(res.status, 200);
+  await h.cleanup();
+});
+
+test('saving without a device map configured says so', async () => {
+  const h = await harness();
+  const res = await h.get('/api/devices', {
+    method: 'PUT', headers: { 'x-dali-ui': '1' }, body: '{}',
+  });
+  assert.equal(res.status, 503);
+  await h.cleanup();
+});
