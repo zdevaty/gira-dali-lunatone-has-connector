@@ -5,6 +5,7 @@ import { createDecoder } from './lib/decoder.js';
 import { createAnomalyDetector } from './lib/anomaly.js';
 import { createHaClient } from './lib/ha-client.js';
 import { createHaSensors } from './lib/ha-sensors.js';
+import { createGatewayAdmin } from './lib/gateway-admin.js';
 import { createController } from './lib/control.js';
 import { createGearDiscovery } from './lib/discover.js';
 import { monotonicNow, createClockWatch } from './lib/clock.js';
@@ -97,6 +98,12 @@ function loadConfig() {
     // Opt-in: it creates entities in someone's Home Assistant.
     haSensors: ['true', '1', 'yes'].includes(String(process.env.HA_SENSORS ?? '').toLowerCase()),
     haSensorsMs: Number(process.env.HA_SENSORS_MS ?? 60_000),
+    // Scans and device names/groups from the panel. On by default since the
+    // exception was agreed; off makes the gateway page read-only.
+    deviceManagement: !['false', '0', 'no'].includes(String(process.env.DEVICE_MANAGEMENT ?? 'true').toLowerCase()),
+    lunatoneDomain: process.env.LUNATONE_DOMAIN || 'lunatone',
+    // How long a reloaded integration gets before the mapped lights are checked.
+    scanReloadSettleMs: Number(process.env.SCAN_RELOAD_SETTLE_MS ?? 8000),
     discoverGear: ['true', '1', 'yes'].includes(String(process.env.DISCOVER_GEAR ?? '').toLowerCase()),
     brightnessGain: Number(process.env.BRIGHTNESS_GAIN) || 1,
     colourGain: Number(process.env.COLOUR_GAIN) || 1,
@@ -134,7 +141,8 @@ const FRAME_KINDS = new Set([
 
 function wantLogged(level, kind) {
   switch (level) {
-    case 'alerts': return kind === 'alert' || kind === 'connection';
+    // A write to the bus is always worth the line, whatever else is dropped.
+    case 'alerts': return kind === 'alert' || kind === 'connection' || kind === 'gateway_write';
     case 'events': return !FRAME_KINDS.has(kind) || kind === 'inputEvent';
     case 'decoded': return kind !== 'raw';
     default: return true;
@@ -235,6 +243,13 @@ function formatConsoleLine(event) {
       return `${time}  web    ${event.status} on ${event.bind}:${event.port} (${event.restricted_to})`;
     case 'devices':
       return `${time}  map    ${event.action}: ${event.devices} device${event.devices === 1 ? '' : 's'}${event.problems ? `, ${event.problems} problem(s)` : ''}`;
+    case 'gateway_write': {
+      const detail = Object.entries(event)
+        .filter(([k]) => !['kind', 'ts', 'action'].includes(k))
+        .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`)
+        .join(' ');
+      return `${time}  WRITE  ${event.action} ${detail}`;
+    }
     case 'gateway':
       return `${time}  gw     ${event.name} ${event.version} (${event.lines} line${event.lines === 1 ? '' : 's'}, tier ${event.tier})`;
     case 'discover': {
@@ -291,6 +306,7 @@ function main() {
   // Declared before emit(), which broadcasts to them as events happen.
   let ui = null;
   let sensors = null;
+  let gatewayAdmin = null;
 
   // Observability. All bounded, all read-only from the UI's point of view.
   const ring = createRing(Number(process.env.UI_RING ?? 2000));
@@ -409,6 +425,7 @@ function main() {
     emit({ kind: 'connection', status: 'shutdown', signal });
     watchdog.stop();
     liveness.stop();
+    gatewayAdmin?.stop();
     health.stop();
     await ui?.stop().catch(() => {});
     // Its own 1.5 s bound, so "stopped" reaches HA on a deliberate restart
@@ -435,7 +452,10 @@ function main() {
     emit({ kind: 'alert', alert: 'ha_sensors_disabled', reason: 'no Home Assistant token',
       note: 'set HA_TOKEN, or run as the Home Assistant app, which provides one' });
   }
-  const ha = config.controlEnabled || sensorsWanted
+  // Also whenever there is a token at all -- which under the Supervisor is
+  // always -- so a gateway scan can reload the Lunatone integration and the
+  // commissioning page can list lights with control still off.
+  const ha = config.controlEnabled || sensorsWanted || config.haToken
     ? createHaClient({ url: config.haUrl, token: config.haToken, log: emit })
     : null;
 
@@ -499,6 +519,12 @@ function main() {
     // so the pairing window is measured against what the log actually shows.
     const tsMs = Date.now();
     const decoded = decoder.decodeFrame(bits, bytes, tsMs);
+    // A scan is thousands of queries and addressing commands, TERMINATE among
+    // them, which the decoder rightly reads as dali_reset. Still logged, but
+    // marked -- before it is emitted, or the capture never sees the mark -- so
+    // neither a person nor an automation mistakes our own scan for a fault.
+    const scanning = gatewayAdmin?.scanning() ?? false;
+    if (scanning && decoded.kind === 'alert') decoded.during_scan = true;
     const event = emit(decoded, tsMs);
 
     // The event scheme is part of the controller's configuration. If someone flips it
@@ -516,14 +542,16 @@ function main() {
     } else if (event.kind === 'level') {
       alert = anomaly.onLevel(event.target, event.level, tsMs);
     }
-    if (alert) emit(alert);
+    if (alert) emit(scanning ? { ...alert, during_scan: true } : alert);
 
     // Only 24-bit input events drive lights; 16-bit frames (the emergency
     // broadcast controller) are logged above and deliberately not mapped.
     // Arc levels are the only direct evidence of what a light is actually doing, so
     // feed them to the controller as a check on what Home Assistant reports.
-    if (controller && event.kind === 'level') controller.observeLevel(event.target, event.level);
-    if (discovery && event.kind === 'level') discovery.observeLevel(event.target, event.level);
+    // Not during a scan: what the gear does then is the scan's doing, and
+    // learning a mapping from it would be learning noise.
+    if (!scanning && controller && event.kind === 'level') controller.observeLevel(event.target, event.level);
+    if (!scanning && discovery && event.kind === 'level') discovery.observeLevel(event.target, event.level);
     // A knob being turned mid-probe injects levels of its own and would corrupt the
     // mapping, so hand the bus back to the person using it.
     if (discovery && event.kind === 'inputEvent') discovery.abort('a controller was used during discovery');
@@ -637,6 +665,37 @@ function main() {
   // never fatal: logging the bus is useful on its own, and HA may come back later.
   liveness.start();
 
+  // The gateway's own device list, scans, and device names and groups -- the
+  // one place the bridge asks for anything to reach the bus. See
+  // lib/gateway-admin.js for exactly how little that is.
+  gatewayAdmin = createGatewayAdmin({
+    host: config.gatewayIp,
+    log: emit,
+    onScanFinished: async (summary) => {
+      if (!ha) return { ha_reload: { ok: false, reason: 'Home Assistant is not configured' } };
+      const mapped = Object.values(deviceStore ? deviceStore.get() : {}).map((m) => m.entity);
+      const reload = await ha.reloadIntegration(config.lunatoneDomain, { viaEntities: mapped });
+      emit({ kind: 'ha_reload', domain: config.lunatoneDomain, ...reload, scan: summary.mode });
+      if (!reload.ok) {
+        emit({ kind: 'alert', alert: 'ha_integration_reload_failed', domain: config.lunatoneDomain,
+          note: 'reload the Lunatone integration by hand: Settings > Devices & services > Lunatone > Reload' });
+        return { ha_reload: reload, missing_entities: null };
+      }
+      // A reload takes a moment. Then prove the knobs still point at lights
+      // that exist: a scan must never quietly leave a mapping dangling.
+      await new Promise((resolve) => setTimeout(resolve, config.scanReloadSettleMs));
+      const lights = await ha.listLights();
+      if (ha.isDown() || lights.length === 0) return { ha_reload: reload, missing_entities: null, lights: null };
+      const known = new Set(lights.map((l) => l.entity_id));
+      const missing = [...new Set(mapped)].filter((e) => !known.has(e));
+      for (const entity of missing) {
+        emit({ kind: 'alert', alert: 'device_map_problem', entity,
+          problem: `mapped light "${entity}" is not in Home Assistant after the scan` });
+      }
+      return { ha_reload: reload, missing_entities: missing, lights: lights.length };
+    },
+  });
+
   // The web UI. Under the Supervisor it listens on the app network and accepts
   // ONLY the ingress proxy: Home Assistant has already authenticated whoever
   // reaches it, and no browser can reach the port directly. Standalone it binds
@@ -653,6 +712,8 @@ function main() {
       store,
       ha,
       devices: deviceStore,
+      gateway: gatewayAdmin,
+      gatewayWrites: config.deviceManagement,
       log: emit,
     });
     ui.start().catch((err) =>

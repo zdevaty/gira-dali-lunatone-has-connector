@@ -34,6 +34,11 @@ export function createFakeGateway() {
   let connections = 0;
   let infoStatus = 200;
   let infoErrors = {};
+  // The admin side: device list and scans. Every request is recorded, so a
+  // test can prove exactly what the bridge asked the gateway to do.
+  const adminRequests = [];
+  let devices = [];
+  let scanPolls = null;
 
   const server = http.createServer((req, res) => {
     // The liveness probe the design proposes. The body is the real shape, taken
@@ -57,6 +62,32 @@ export function createFakeGateway() {
       }));
       return;
     }
+    const json = (code, body) => {
+      res.writeHead(code, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    const scanModel = (status) => ({ id: 'scan-1', progress: status === 'done' ? 100 : 50, found: devices.length,
+      foundSensors: 0, status, lines: [{ line: 0, scanState: status === 'done' ? 'done' : 'scanning', found: devices.length, addressed: 1, scanned: devices.length, progress: 50 }] });
+
+    if (req.url === '/devices' || req.url.startsWith('/dali/') || req.url.startsWith('/device/')) {
+      let text = '';
+      req.on('data', (c) => { text += c; });
+      req.on('end', () => {
+        let body;
+        try { body = text ? JSON.parse(text) : undefined; } catch { body = text; }
+        adminRequests.push({ method: req.method, path: req.url, body });
+        if (req.method === 'GET' && req.url === '/devices') return json(200, { devices, timeSignature: {} });
+        if (req.method === 'POST' && req.url === '/dali/scan') { scanPolls = 0; return json(200, scanModel('in progress')); }
+        if (req.method === 'GET' && req.url === '/dali/scan') {
+          if (scanPolls === null) return json(200, scanModel('not started'));
+          scanPolls += 1;
+          return json(200, scanModel(scanPolls >= 2 ? 'done' : 'in progress'));
+        }
+        json(404, { detail: 'Not Found' });
+      });
+      return;
+    }
+
     res.writeHead(404);
     res.end();
   });
@@ -87,6 +118,8 @@ export function createFakeGateway() {
     // The gateway greets every new connection with this before any bus traffic.
     greet: () => ({ type: 'info', data: { name: 'DALI-2 IoT', version: 'v1.18.7/1.4.6' } }),
     setInfoStatus: (code) => { infoStatus = code; },
+    setDevices: (list) => { devices = list; },
+    adminRequests,
     setInfoErrors: (errors) => { infoErrors = errors; },
     clients: () => sockets.size,
     connections: () => connections,

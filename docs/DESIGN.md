@@ -11,7 +11,7 @@ started from.
 |---|---|
 | 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection. |
 | 2 — deploy | **Done and running.** Installed as `local_dali_bridge` on the Pi, control enabled, one room mapped and behaving. |
-| 3 — web UI | **Mostly done.** Now, Commission and Health ship in the sidebar panel. Captures and Tuning are not built. |
+| 3 — web UI | **Mostly done.** Now, Commission, Devices and Health ship in the sidebar panel. Captures and Tuning are not built. |
 | 4 — setup features | **Partly.** Commissioning and the device map are in the UI, applied without a restart. The optional Home Assistant status sensors are built (`lib/ha-sensors.js`, `ha_sensors` option): state-machine entities written on a one-minute heartbeat and a few seconds after a gateway change or alert, never on a gesture. Discovery is not driveable from the page yet. |
 | 5 — cutover | **Done** in the sense that the Pi is the only bridge. **The chaos checklist below has not been run**, so "extremely reliable" remains a design claim rather than a tested property. |
 
@@ -80,8 +80,33 @@ Seven hops. We own one of them. Two consequences worth saying out loud:
 
 ### Constraints that outrank everything else
 
-1. **The DALI bus is strictly read-only.** The daemon never transmits a frame.
-   One bad write can erase a device's commissioning.
+1. **The DALI bus is read-only, except when a person presses a button.** The
+   daemon never transmits on its own and has no way to send a raw frame. One
+   bad write can erase a device's commissioning.
+
+   *Amended 16 Sep 2026, at the user's request.* Adding a light needed a
+   gateway scan, and the user asked for it -- and for naming devices -- to live
+   in the panel instead of DALI Cockpit. The exception, and all of it, is
+   `lib/gateway-admin.js`:
+   - `POST /dali/scan` in two fixed bodies only: refresh
+     (`noAddressing: true`) and system extension (`noAddressing: false`), both
+     with an explicit `newInstallation: false`. **A new installation is not
+     reachable**: it deletes every device and re-addresses the bus. The body
+     is also re-checked just before sending, because the gateway's defaults for
+     an empty body are an addressing extension, not a no-op.
+   - `PUT /device/{id}` with `name` and `groups` only. Groups live in the
+     device, so that is a bus write too.
+   - A path allow-list; raw `sendDali16/24`, light control, `DELETE`, reset and
+     reboot cannot be reached. A test scans the source for them.
+   - Every request is a `gateway_write` capture line at every capture level.
+     Alerts raised by scan traffic carry `during_scan`, and gear learning
+     ignores levels seen during a scan.
+   - The app option `device_management` turns the lot off.
+
+   Deeper device configuration (fade time, min/max and power-on level, colour
+   limits) would mean raw DALI configuration frames. **Not built**, and it
+   needs its own explicit decision: that is exactly the class of write this
+   rule exists for.
 2. **The Home Assistant token never touches disk.** (Section 10 removes it
    entirely on the primary path.)
 3. **The captures in `logs/` are real data**, not test debris.
@@ -341,6 +366,11 @@ genuinely tedious and easy to get wrong.
 minimum brightness. **Applied live, no restart**, because tuning how a knob
 *feels* is inherently iterative: turn, watch the log, adjust, turn again. A
 restart in that loop costs switch availability and breaks concentration.
+
+**Devices** — *added 16 Sep 2026.* The gateway's own device list with status
+flags, name and group editing, and the two scans, with progress, cancel, and
+the Lunatone integration reloaded in Home Assistant afterwards. See constraint
+1 for why this is the only page that writes.
 
 **Health** — uptime, RSS, event-loop lag, frames/min, reconnects, HA call
 success rate, gateway bus errors, clock-sync state, disk used and free, and an

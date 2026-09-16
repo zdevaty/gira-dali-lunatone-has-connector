@@ -19,6 +19,14 @@ configuration:
       sensor.dali_bridge_last_gesture and sensor.dali_bridge_last_alert, for
       dashboards and automations. Updated every minute, and within seconds when
       the gateway drops or an alert fires.
+  device_management:
+    name: Device management from the panel
+    description: >-
+      Lets the Devices page scan the bus for new devices and rename them or
+      change their groups through the gateway. These actions put frames on the
+      DALI bus, and only ever when you press the button. Off makes the page
+      read-only. Re-addressing the whole installation is never possible from
+      this app.
   log_dir:
     name: Capture directory
     description: >-

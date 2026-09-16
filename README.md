@@ -5,9 +5,11 @@ readable events, logs it as JSONL, flags suspicious patterns — and, since the 
 controllers were switched to input-device mode, translates their knob gestures into
 Home Assistant calls.
 
-**The bus stays strictly read-only.** The daemon never transmits a DALI frame. Lights are
-changed by asking Home Assistant, which asks the gateway. One bad write on the bus can
-erase a device's configuration, so there is no code path that sends.
+**The bus is read-only, with one narrow exception.** The daemon never transmits a DALI
+frame on its own and cannot send raw frames. Lights are changed by asking Home Assistant,
+which asks the gateway. The exception is the panel's Devices page: when a person presses
+the button, it asks the gateway API for a scan (refresh or add new devices, never a new
+installation) or to change a device's name or groups. See `lib/gateway-admin.js`.
 
 Zero dependencies, Node 22+.
 
@@ -486,6 +488,8 @@ lib/clock.js        monotonic time for intervals; clock-step detection
 lib/watchdog.js     worker thread that kills a wedged process
 lib/lock.js         one instance per machine
 lib/liveness.js     read-only gateway probe; half-open socket detection
+lib/gateway-admin.js  gateway device list, scans, names and groups -- the only bus writes
+lib/ha-sensors.js   optional status sensors published into Home Assistant
 lib/options.js      app / Supervisor runtime adapters
 config.yaml         app manifest -- the repo root IS the app directory
 Dockerfile          node:22-alpine; build context is the repo root

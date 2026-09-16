@@ -3,10 +3,13 @@
 Watches the DALI bus through a Lunatone DALI-2 IoT gateway and turns Gira
 rotary-knob gestures into Home Assistant light calls.
 
-**It never transmits on the DALI bus.** The bus is read through the gateway's
-monitor socket; every light change goes out through Home Assistant, which asks
-the gateway. One bad frame on a DALI bus can erase a device's commissioning, so
-there is no code path here that can send one.
+**It never transmits on the DALI bus on its own.** The bus is read through the
+gateway's monitor socket; every light change goes out through Home Assistant,
+which asks the gateway. One bad frame on a DALI bus can erase a device's
+commissioning, so the only exceptions are the scan and device-naming buttons
+on the **Devices** page, which ask the gateway to do it and only when you press
+them (see *Adding devices*). The app cannot send raw frames, and cannot start a
+new installation that re-addresses the bus.
 
 ## Installing and updating
 
@@ -146,7 +149,56 @@ app: refusing to start would disable every knob in the building instead of one.
 | `clock_step` | The system clock jumped; timestamps across it are not comparable |
 | `watchdog_kill` | The event loop wedged and the process was killed to recover |
 | `unexpected_event_scheme` | A controller is not using device/instance addressing |
+| `gateway_write` | The app asked the gateway for a scan or a device change (always logged) |
+| `during_scan=true` | This alert came from scan traffic, not a fault |
+| `gateway_scan_failed` | A scan was refused, hit a bus error or never finished |
+| `ha_integration_reload_failed` | After a scan, reload the Lunatone integration by hand |
 | `ha_sensors_disabled` | Status sensors were turned on but there is no token to publish them with |
+
+## Adding devices
+
+The chain, and who does what:
+
+| Step | Where |
+|---|---|
+| Wire the device in | — |
+| Give it an address and put it in the gateway's list | **DALI panel → Devices → Add new devices** |
+| Make Home Assistant see the new light | automatic after the scan (Lunatone integration reload) |
+| Name it, set its groups | **Devices**, on the device's card |
+| Knob event mode (device/instance addressing) | still **DALI Cockpit** — the gateway API has no setting for it |
+| Which knob drives which light | **Commission** |
+
+**Refresh device list** re-reads the devices that already have addresses and
+changes nothing on them. Use it when a device shows as missing or not
+responding.
+
+**Add new devices…** is the gateway's *system extension*: devices without an
+address get one, and devices that have one keep it. It asks you to confirm,
+because it puts a lot of traffic on the bus and the knobs may not respond until
+it finishes. Afterwards the app reloads the Lunatone integration and checks
+that every light a knob is mapped to still exists; the result is shown on the
+page with a button to go and map a knob.
+
+What the app will **not** do, on purpose: a *new installation* (the gateway
+deletes every device and re-addresses the whole bus, which would break every
+knob mapping and every Home Assistant entity), raw DALI frames, deleting
+devices, reset or reboot. Use DALI Cockpit or the gateway's own page for those,
+knowing what they do.
+
+On a device's card:
+
+- **Name** is stored on the gateway. Home Assistant shows it after the
+  Lunatone integration is reloaded; entity IDs normally stay the same.
+- **Groups** are stored *in the device*, so saving them writes to the bus and
+  asks once more. Lights answer group commands by these.
+
+A scan's own traffic looks alarming in the log -- `dali_reset` among others.
+Anything raised during a scan and for ten seconds after carries
+`during_scan=true`, and the status sensors ignore it.
+
+Every request the app makes of the gateway is written to the capture as a
+`gateway_write` line, whatever **How much of the bus to capture** is set to.
+To make the page read-only, switch off **Device management from the panel**.
 
 ## Status sensors in Home Assistant
 

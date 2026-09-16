@@ -304,3 +304,75 @@ test('saving without a device map configured says so', async () => {
   assert.equal(res.status, 503);
   await h.cleanup();
 });
+
+// ── Gateway devices and scans ───────────────────────────────────────────────
+
+function fakeGatewayAdmin() {
+  const calls = [];
+  return {
+    calls,
+    listDevices: async () => ({ reachable: true, error: null, devices: [{ id: 1, name: 'Line 0 DALI 00', address: 0, groups: [] }] }),
+    status: () => ({ active: false, settling: false, mode: null, gateway: null, last: null }),
+    startScan: async (mode) => { calls.push(['scan', mode]); return mode === 'refresh' ? { ok: true, status: {} } : { ok: false, code: 400, error: 'unknown scan mode' }; },
+    cancelScan: async () => { calls.push(['cancel']); return { ok: false, code: 409, error: 'no scan is running' }; },
+    updateDevice: async (id, body) => { calls.push(['update', id, body]); return { ok: true, device: { id, ...body } }; },
+  };
+}
+
+const guarded = (method, body) => ({
+  method,
+  headers: { 'content-type': 'application/json', 'x-dali-ui': '1' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+
+test('the gateway device list is readable, and says whether writes are allowed', async () => {
+  const h = await harness({ gateway: fakeGatewayAdmin(), gatewayWrites: false });
+  const body = await (await h.get('/api/gateway/devices')).json();
+  assert.equal(body.devices[0].name, 'Line 0 DALI 00');
+  assert.equal(body.writes_enabled, false);
+  await h.cleanup();
+});
+
+test('a scan needs the guard header: a cross-origin form must not be able to start one', async () => {
+  const gateway = fakeGatewayAdmin();
+  const h = await harness({ gateway, gatewayWrites: true });
+  const res = await h.get('/api/gateway/scan', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"mode":"refresh"}' });
+  assert.equal(res.status, 403);
+  assert.equal(gateway.calls.length, 0);
+  await h.cleanup();
+});
+
+test('with device management switched off, every gateway write is refused', async () => {
+  const gateway = fakeGatewayAdmin();
+  const h = await harness({ gateway, gatewayWrites: false });
+  for (const [p, init] of [
+    ['/api/gateway/scan', guarded('POST', { mode: 'refresh' })],
+    ['/api/gateway/scan/cancel', guarded('POST')],
+    ['/api/gateway/device/1', guarded('PUT', { name: 'x' })],
+  ]) {
+    const res = await h.get(p, init);
+    assert.equal(res.status, 403, p);
+  }
+  assert.equal(gateway.calls.length, 0);
+  await h.cleanup();
+});
+
+test('scan, cancel and device updates reach the gateway module with their status codes intact', async () => {
+  const gateway = fakeGatewayAdmin();
+  const h = await harness({ gateway, gatewayWrites: true });
+  assert.equal((await h.get('/api/gateway/scan', guarded('POST', { mode: 'refresh' }))).status, 200);
+  assert.equal((await h.get('/api/gateway/scan', guarded('POST', { mode: 'newInstallation' }))).status, 400);
+  assert.equal((await h.get('/api/gateway/scan/cancel', guarded('POST'))).status, 409);
+  const upd = await h.get('/api/gateway/device/12', guarded('PUT', { name: 'Hall' }));
+  assert.equal(upd.status, 200);
+  assert.equal((await h.get('/api/gateway/device/abc', guarded('PUT', { name: 'Hall' }))).status, 404);
+  assert.equal((await h.get('/api/gateway/scan', { ...guarded('POST'), body: '{nope' })).status, 400);
+  assert.deepEqual(gateway.calls, [['scan', 'refresh'], ['scan', 'newInstallation'], ['cancel'], ['update', 12, { name: 'Hall' }]]);
+  await h.cleanup();
+});
+
+test('without a gateway module the endpoints say so rather than 404', async () => {
+  const h = await harness();
+  assert.equal((await h.get('/api/gateway/devices')).status, 503);
+  await h.cleanup();
+});

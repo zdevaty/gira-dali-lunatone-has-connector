@@ -10,11 +10,11 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.5.0"
+version: "0.6.0"
 slug: dali_bridge
 description: >-
-  Read-only DALI bus monitor and Gira rotary bridge for a Lunatone DALI-2 IoT
-  gateway. Watches the bus; never transmits on it.
+  DALI bus monitor, Gira rotary bridge and device manager for a Lunatone
+  DALI-2 IoT gateway. Watches the bus; writes only when you press a button.
 url: https://github.com/zdenekdevaty/dali-bridge
 stage: experimental
 
@@ -84,6 +84,11 @@ options:
   control_enabled: false
   # Off by default: it creates entities in Home Assistant.
   ha_sensors: false
+  # Scans and device names/groups from the panel. These are the only things
+  # that ever make the gateway put frames on the bus; off makes the Devices
+  # page read-only. A new installation (re-addressing everything) is not
+  # possible from the app either way.
+  device_management: true
   # /data is private to this app, so nothing else can read the captures until
   # the web UI can serve them. Point this at /share/dali-bridge to inspect them
   # from the Terminal or Samba apps -- at the cost of them landing in every full
@@ -103,6 +108,7 @@ schema:
   log_dir: str
   control_enabled: bool
   ha_sensors: bool
+  device_management: bool
   log_frames: "list(all|decoded|events|alerts)"
   log_retention_days: "int(0,3650)"
   log_max_mb: "int(16,102400)"

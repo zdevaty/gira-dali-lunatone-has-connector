@@ -221,3 +221,11 @@ test('nothing it publishes looks like a credential', () => {
   const text = JSON.stringify(h.sensors.states());
   assert.doesNotMatch(text, /token|eyJ[A-Za-z0-9_-]{10,}/i);
 });
+
+test('an alert raised by our own scan traffic is not published as the last alert', async () => {
+  const h = harness();
+  h.emit({ kind: 'alert', alert: 'dali_reset', during_scan: true });
+  const last = h.sensors.states().find((s) => s.entity_id.endsWith('last_alert'));
+  assert.equal(last.state, 'none');
+  assert.equal(last.attributes.alerts_since_start, 0);
+});

@@ -44,6 +44,10 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute loses to any rule that sets display, so the save bars
+   and scan controls, which are flex and grid, never actually hid. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -204,6 +208,33 @@ main { padding: .8rem; max-width: 60rem; margin: 0 auto; }
 }
 .banner.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
 .banner.ok { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+
+/* ── Devices ────────────────────────────────────────────────────────────── */
+.scanbox {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: .7rem .8rem; margin-bottom: .8rem;
+}
+.scan-actions { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+.scan-choice .hint { margin: .3rem 0 0; }
+.confirm { border-left: 3px solid var(--accent); padding: .2rem 0 .2rem .7rem; margin: .4rem 0; }
+.confirm ul { margin: .3rem 0 .6rem; padding-left: 1.1rem; }
+.progress-head { display: flex; align-items: center; gap: .5rem; justify-content: space-between; }
+.meter { height: .45rem; background: var(--sunk); border-radius: 999px; overflow: hidden; margin: .5rem 0 .2rem; }
+.meter i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+
+.gwdev .dev-head .type { font-size: .74rem; color: var(--soft); font-family: var(--mono); }
+.badges { display: flex; gap: .3rem; flex-wrap: wrap; }
+.badge {
+  font-size: .68rem; padding: .05rem .4rem; border-radius: 999px;
+  background: var(--sunk); color: var(--soft);
+}
+.badge.bad { background: var(--bad-soft); color: var(--bad); }
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.groups { display: flex; gap: .25rem; flex-wrap: wrap; flex: 1; }
+.groups .chip { min-width: 2rem; padding: .15rem .35rem; font-family: var(--mono); font-size: .74rem; }
+.driven { font-size: .78rem; color: var(--soft); margin-top: .35rem; }
+.dev-actions { display: flex; gap: .4rem; align-items: center; margin-top: .5rem; flex-wrap: wrap; }
+.dev-actions .hint { margin: 0; flex: 1; }
 
 /* ── Health ─────────────────────────────────────────────────────────────── */
 .cards { display: grid; gap: .55rem; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); }

@@ -352,3 +352,79 @@ test('status sensors reach Home Assistant, even with control off, and say stoppe
   assert.equal(latest('binary_sensor.dali_bridge_gateway').state, 'unavailable');
   assert.equal(ha.calls.length, 0, 'control is off: the sensors must not have turned into light calls');
 });
+
+test('a scan from the panel: exact body to the gateway, our own traffic marked, HA reloaded', async (t) => {
+  const gw = createFakeGateway();
+  const gwPort = await gw.listen();
+  gw.setDevices([{ id: 1, name: 'Line 0 DALI 00', type: 'dimmable', line: 0, address: 0, available: true, groups: [], daliTypes: [6], status: {} }]);
+  const ha = createFakeHa();
+  const haPort = await ha.listen();
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-e2e-'));
+  fs.writeFileSync(path.join(dir, 'devices.json'), JSON.stringify({ 3: { entity: 'light.line_0_dali_00' } }));
+
+  const child = spawn(process.execPath, ['index.js'], {
+    env: {
+      ...process.env,
+      GATEWAY_IP: `127.0.0.1:${gwPort}`,
+      LOG_DIR: dir,
+      CONTROL_ENABLED: 'false',
+      DEVICE_MAP: path.join(dir, 'devices.json'),
+      HA_URL: `http://127.0.0.1:${haPort}`,
+      HA_TOKEN: 'fake-test-credential',
+      UI_PORT: '0',
+      SCAN_RELOAD_SETTLE_MS: '100',
+      CONSOLE: 'off',
+      WATCHDOG: 'false',
+    },
+    stdio: 'ignore',
+  });
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await gw.close();
+    await ha.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  const ui = await waitFor(() => read(dir).find((e) => e.kind === 'ui' && e.status === 'listening'));
+  await waitFor(() => read(dir).some((e) => e.kind === 'connection' && e.status === 'connected'));
+  const base = `http://127.0.0.1:${ui.port}`;
+  const post = (p, body) => fetch(base + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dali-ui': '1' }, body: JSON.stringify(body) });
+
+  const list = await (await fetch(`${base}/api/gateway/devices`)).json();
+  assert.equal(list.devices[0].name, 'Line 0 DALI 00');
+  assert.equal(list.writes_enabled, true);
+
+  assert.equal((await post('/api/gateway/scan', { mode: 'newInstallation' })).status, 400);
+  assert.equal((await post('/api/gateway/scan', {})).status, 400, 'no mode is not a default mode');
+  const started = await post('/api/gateway/scan', { mode: 'extend' });
+  assert.equal(started.status, 200);
+
+  // TERMINATE is on the wire during every scan, and decodes as dali_reset.
+  gw.send(gw.monitor(16, [0xa1, 0x00]));
+
+  const last = await (async () => {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const st = await (await fetch(`${base}/api/gateway/scan`)).json();
+      if (st.last?.after) return st.last;
+      if (Date.now() > deadline) throw new Error(`scan never finished: ${JSON.stringify(st)}`);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  })();
+
+  const scans = gw.adminRequests.filter((r) => r.method === 'POST' && r.path === '/dali/scan');
+  assert.equal(scans.length, 1, 'the refused requests never reached the gateway');
+  assert.deepEqual(scans[0].body, { newInstallation: false, noAddressing: false });
+
+  assert.equal(last.outcome, 'done');
+  assert.equal(last.after.ha_reload.ok, true);
+  assert.deepEqual(ha.reloads, ['/api/config/config_entries/entry/lunatone-1/reload']);
+  assert.deepEqual(last.after.missing_entities, []);
+
+  const events = read(dir);
+  const reset = events.find((e) => e.kind === 'alert' && e.alert === 'dali_reset');
+  assert.ok(reset, 'still logged');
+  assert.equal(reset.during_scan, true, 'but marked as our own scan');
+  assert.deepEqual(events.filter((e) => e.kind === 'gateway_write').map((e) => e.action), ['scan_start', 'scan_finished']);
+  assert.equal(ha.calls.length, 0, 'no light was touched');
+});

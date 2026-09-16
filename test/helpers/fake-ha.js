@@ -5,6 +5,7 @@ import http from 'node:http';
 export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
   const calls = [];
   const states = [];
+  const reloads = [];
   const server = http.createServer((req, res) => {
     const json = (body) => {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -12,6 +13,18 @@ export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
     };
 
     if (req.method === 'GET' && req.url === '/api/') return json({ message: 'API running.' });
+
+    if (req.method === 'GET' && req.url === '/api/states') {
+      return json([{ entity_id: 'light.line_0_dali_00', state: 'on', attributes: { friendly_name: 'Line 0 DALI 00', supported_color_modes: ['color_temp'] } }]);
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/config/config_entries/entry?')) {
+      return json([{ entry_id: 'lunatone-1', domain: 'lunatone' }]);
+    }
+    if (req.method === 'POST' && /^\/api\/config\/config_entries\/entry\/[^/]+\/reload$/.test(req.url)) {
+      reloads.push(req.url);
+      return json({ require_restart: false });
+    }
 
     if (req.method === 'GET' && req.url.startsWith('/api/states/')) {
       return json({
@@ -55,6 +68,7 @@ export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
   return {
     calls,
     states,
+    reloads,
     listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port))),
     close: () => new Promise((r) => server.close(() => r())),
   };

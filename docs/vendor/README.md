@@ -4,8 +4,11 @@
 IoT gateway's REST API, as served by firmware **1.18.7/1.4.6** (the gateway at
 10.0.0.230). Downloaded 2026-09-16. Reference only: nothing loads it at runtime.
 
-Endpoints that put frames on the bus or change the gateway are dangerous here,
-and none is used by the bridge today:
+Endpoints that put frames on the bus or change the gateway are dangerous here.
+The bridge uses `GET /devices`, `GET/POST /dali/scan` (two fixed bodies, never a
+new installation), `POST /dali/scan/cancel` and `PUT /device/{id}` (name and
+groups) -- all in `lib/gateway-admin.js`, all behind a button. Apart from the
+scan's two safe modes, nothing in this table is reachable from the code:
 
 | Endpoint | Why it matters |
 |---|---|
@@ -14,4 +17,4 @@ and none is used by the bridge today:
 | `POST /device/{id}/control`, `/group/…`, `/broadcast/…`, `/zone/…` | Light commands; this is what the Home Assistant integration uses |
 | `DELETE /devices`, `DELETE /reset`, `POST /reboot` | Self-explanatory |
 
-The bridge reads `GET /info` for its liveness probe and nothing else.
+Plus `GET /info` for the liveness probe.

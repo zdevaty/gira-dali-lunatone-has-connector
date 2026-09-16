@@ -20,6 +20,7 @@
 <nav class="tabs" role="tablist">
   <button class="tab is-on" data-panel="now" role="tab">Now</button>
   <button class="tab" data-panel="commission" role="tab">Commission</button>
+  <button class="tab" data-panel="gateway" role="tab">Devices</button>
   <button class="tab" data-panel="health" role="tab">Health</button>
 </nav>
 
@@ -71,6 +72,59 @@
     </details>
 
     <p class="hint" id="devices-file"></p>
+  </section>
+
+  <!-- ── Devices (the gateway's list, scans, names and groups) ─────────── -->
+  <section class="panel" id="panel-gateway">
+    <div class="lede">
+      <p><b>What the gateway knows.</b> A light has to be in this list before
+      Home Assistant can have it. New drivers on the bus appear here after a
+      scan.</p>
+    </div>
+
+    <div id="gw-banners"></div>
+
+    <div class="scanbox" id="scanbox">
+      <div class="scan-actions" id="scan-actions">
+        <div class="scan-choice">
+          <button class="btn" data-scan="refresh">Refresh device list</button>
+          <p class="hint">Re-reads the devices that already have addresses.
+          Changes nothing on them.</p>
+        </div>
+        <div class="scan-choice">
+          <button class="btn btn-primary" data-scan="extend">Add new devices…</button>
+          <p class="hint">Gives addresses to new, unaddressed devices. Existing
+          addresses are kept.</p>
+        </div>
+      </div>
+
+      <div class="confirm" id="scan-confirm" hidden>
+        <p><b>Scan the bus and address new devices?</b></p>
+        <ul class="hint">
+          <li>This puts a lot of traffic on the DALI bus. Knobs may not respond
+          until it finishes, typically a minute or two.</li>
+          <li>Devices that already have an address keep it.</li>
+          <li>Home Assistant's Lunatone integration is reloaded afterwards.</li>
+        </ul>
+        <button class="btn btn-primary" id="scan-go">Yes, scan now</button>
+        <button class="btn" id="scan-no">Cancel</button>
+      </div>
+
+      <div class="progress" id="scan-progress" hidden>
+        <div class="progress-head">
+          <span id="scan-label">Scanning…</span>
+          <button class="btn" id="scan-cancel">Stop scan</button>
+        </div>
+        <div class="meter"><i id="scan-meter"></i></div>
+        <p class="hint" id="scan-detail"></p>
+      </div>
+
+      <p class="hint">Re-addressing the whole installation is not possible from
+      here, on purpose. Knob event settings still need DALI Cockpit.</p>
+    </div>
+
+    <div class="empty" id="gw-empty" hidden></div>
+    <div id="gw-devices"></div>
   </section>
 
   <!-- ── Health ────────────────────────────────────────────────────────── -->
