@@ -786,12 +786,17 @@ would otherwise be diagnosed as haunted hardware.
      `noPower` has still never been seen for real. Without `lines`, bus power
      would stay "not reported" and `binary_sensor.dali_bridge_bus_power`
      `unavailable` -- never `on` by default.
+   - **Zone mirroring worked on the Pi, 16 Sep.** Which of the three match
+     methods it used there is not recorded.
    - What **Home Assistant device identifiers** the Lunatone integration uses.
      Zone mirroring matches by the knob map first and a unique exact name last;
      an identifier ending in `device<id>` is the middle guess, and a light none
      of the three settles is listed as unmatched.
    - Whether **`GET /sensors`** is kept current from sensor events, or only on
-     a refresh.
+     a refresh. Moot until a sensor is installed; there is none.
+   - **The gateway has no internet access** (confirmed 16 Sep), which is why
+     its clock sat at February 2019 with network time on. Its clock will drift
+     from whenever it was last set by hand.
    - Whether a **diagnostics read disturbs a knob gesture** on a busy bus --
      moot here until a driver that supports it is installed.
 
