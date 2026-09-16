@@ -376,3 +376,79 @@ test('without a gateway module the endpoints say so rather than 404', async () =
   assert.equal((await h.get('/api/gateway/devices')).status, 503);
   await h.cleanup();
 });
+
+// ── Gateway page ────────────────────────────────────────────────────────────
+
+function fakeServices() {
+  const calls = [];
+  const rec = (name, result = { ok: true }) => async (...args) => { calls.push([name, ...args]); return result; };
+  return {
+    calls,
+    admin: { ...fakeGatewayAdmin(), identify: rec('identify', { ok: true, restored: { on: false } }), refreshScenes: rec('scenes', { ok: true, scenes: {} }), refreshSensors: rec('sensors', { ok: true, sensors: [] }) },
+    services: {
+      reader: {
+        info: async () => ({ ok: true, value: { name: 'gw', version: 'v1.18.7/1.4.6' } }),
+        location: async () => ({ ok: true, value: { lat: 50, lon: 14 } }),
+        statusQueries: async () => ({ ok: true, value: { 0: { delayBetweenQueries: 1, queryStatus: true, queryActualLevel: true } } }),
+        settings: async () => ({ ok: true, value: {} }),
+        automations: async () => ({ schedules: [{ id: 1, name: 'Night', enabled: true, recallTime: { hour: 22 }, targets: [{ type: 'broadcast', id: 0 }] }], circadians: [], sequences: [], trigger_actions: [], event_trigger_actions: [], errors: {} }),
+        devices: async () => ({ ok: true, value: [{ id: 4, name: 'Hall', address: 3, line: 0, groups: [] }] }),
+        zones: async () => ({ ok: true, value: [] }),
+        sensors: async () => ({ ok: true, value: [] }),
+        scenes: async () => ({ ok: true, value: { 0: { dimmable: 20 } } }),
+      },
+      config: { setPolling: rec('polling'), setClock: rec('clock'), setLocationFromHa: rec('location'), zonePlan: rec('plan', { ok: true, plan: { id: 'p' } }), applyZones: rec('apply') },
+      snapshots: { take: rec('snapshot', { ok: true, changed: false }), list: async () => [], compare: async () => ({ ok: false, code: 404, error: 'no such snapshot' }) },
+      watch: { checkClock: async () => ({ recognised: true, drift_s: 2 }), snapshot: () => ({ firmware: 'v1.18.7/1.4.6', verified_firmware: 'v1.18.7/1.4.6', upcoming: [] }) },
+      telemetry: { read: rec('diagnostics', { ok: true }), readings: () => [], snapshot: () => ({ interval_hours: 0 }) },
+    },
+  };
+}
+
+test('the gateway page reads everything with device management off, and changes nothing', async () => {
+  const f = fakeServices();
+  const h = await harness({ gateway: f.admin, gatewayWrites: false, gatewayServices: f.services, devices: fakeDevices({ 9: { entity: 'light.hall', gear: 'short3' } }) });
+  const overview = await (await h.get('/api/gateway/overview')).json();
+  assert.equal(overview.writes_enabled, false);
+  assert.equal(overview.clock.drift_s, 2);
+  assert.equal(overview.polling[0].delayBetweenQueries, 1);
+
+  const autos = await (await h.get('/api/gateway/automations')).json();
+  assert.deepEqual(autos.automations[0].knobs, [{ knob: 9, entity: 'light.hall', device: '“Hall” (A3)' }], 'a broadcast reaches every knob-driven light');
+  assert.equal((await h.get('/api/gateway/device/4/scenes')).status, 200);
+
+  for (const [p, init] of [
+    ['/api/gateway/device/4/identify', guarded('POST')],
+    ['/api/gateway/device/4/diagnostics', guarded('POST')],
+    ['/api/gateway/device/4/scenes', guarded('POST')],
+    ['/api/gateway/sensors/refresh', guarded('POST')],
+    ['/api/gateway/polling/0', guarded('PUT', { delayBetweenQueries: 30, queryStatus: true, queryActualLevel: true })],
+    ['/api/gateway/clock', guarded('POST', { set_now: true })],
+    ['/api/gateway/location', guarded('POST')],
+    ['/api/gateway/zones/apply', guarded('POST', { plan: 'p' })],
+  ]) {
+    assert.equal((await h.get(p, init)).status, 403, p);
+  }
+  assert.deepEqual(f.calls, []);
+
+  // Taking a copy only reads the gateway.
+  assert.equal((await h.get('/api/gateway/snapshots', guarded('POST'))).status, 200);
+  assert.deepEqual(f.calls.map((c) => c[0]), ['snapshot']);
+  await h.cleanup();
+});
+
+test('gateway page writes need the guard header and reach the right module', async () => {
+  const f = fakeServices();
+  const h = await harness({ gateway: f.admin, gatewayWrites: true, gatewayServices: f.services });
+  assert.equal((await h.get('/api/gateway/device/4/identify', { method: 'POST' })).status, 403, 'no guard header');
+  assert.equal((await h.get('/api/gateway/device/4/identify', guarded('POST'))).status, 200);
+  assert.equal((await h.get('/api/gateway/polling/0', guarded('PUT', { delayBetweenQueries: 30, queryStatus: true, queryActualLevel: false }))).status, 200);
+  assert.equal((await h.get('/api/gateway/zones/apply', guarded('POST', { plan: 'abc' }))).status, 200);
+  assert.equal((await h.get('/api/gateway/snapshots/compare?file=nope')).status, 404);
+  assert.deepEqual(f.calls, [
+    ['identify', 4],
+    ['polling', 0, { delayBetweenQueries: 30, queryStatus: true, queryActualLevel: false }],
+    ['apply', 'abc'],
+  ]);
+  await h.cleanup();
+});

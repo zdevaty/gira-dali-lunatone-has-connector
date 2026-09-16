@@ -11,7 +11,7 @@ started from.
 |---|---|
 | 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection. |
 | 2 — deploy | **Done and running.** Installed as `local_dali_bridge` on the Pi, control enabled, one room mapped and behaving. |
-| 3 — web UI | **Mostly done.** Now, Commission, Devices and Health ship in the sidebar panel. Captures and Tuning are not built. |
+| 3 — web UI | **Mostly done.** Now, Commission, Devices, Gateway and Health ship in the sidebar panel. Captures and Tuning are not built. |
 | 4 — setup features | **Partly.** Commissioning and the device map are in the UI, applied without a restart. The optional Home Assistant status sensors are built (`lib/ha-sensors.js`, `ha_sensors` option): state-machine entities written on a one-minute heartbeat and a few seconds after a gateway change or alert, never on a gesture. Discovery is not driveable from the page yet. |
 | 5 — cutover | **Done** in the sense that the Pi is the only bridge. **The chaos checklist below has not been run**, so "extremely reliable" remains a design claim rather than a tested property. |
 
@@ -102,6 +102,44 @@ Seven hops. We own one of them. Two consequences worth saying out loud:
      Alerts raised by scan traffic carry `during_scan`, and gear learning
      ignores levels seen during a scan.
    - The app option `device_management` turns the lot off.
+
+   *Amended again 16 Sep 2026, at the user's request* ("do 1, 2, 3, 4b, 4d"
+   from a list of what the gateway API could add). Every request the bridge
+   may make of the gateway is now one table, `lib/gateway-http.js`, each entry
+   marked `read` (stored data, nothing on the bus), `bus` (the gateway puts
+   frames on the bus) or `config` (the gateway's own settings change). Anything
+   not in the table is refused before it leaves the process, and every body is
+   checked there once more just before sending. A test pins the table, another
+   proves each entry exists in the vendor schema, and a contract test checks
+   every body the bridge builds against it. Added:
+   - **bus**, button only: *identify* -- `POST /device/{id}/control` with
+     exactly `{dimmable: 0-100}` or `{switchable: bool}`, nothing that is
+     stored in the driver (no scene saving, fade time or rate, colour). The
+     light's state is read from the gateway first; if it cannot be read,
+     nothing is sent. It blinks three times and is put back, and the restore
+     runs even when a step fails.
+   - **bus**, button only: re-reading scenes (`POST /device/{id}/scenes`) and
+     sensors (`POST /sensors`).
+   - **bus**, button -- *or on a schedule, only if `diagnostics_interval_hours`
+     is set* (default 0, off): energy and diagnostics reads (DALI parts 252
+     and 253, `GET` but answered by memory-bank queries on the bus). This is
+     the single case of the daemon putting traffic on the bus by itself, and
+     setting the option is that decision being made. A scheduled pass reads
+     one driver at a time, waits while a knob was used in the last two minutes
+     or the app is busy on the bus, and gives up after ten minutes of waiting.
+   - **config**, button only: status polling per line, time zone, clock (set
+     in the exact format the gateway reported, refused if unrecognised),
+     location (from Home Assistant, rounded to two decimals), and zones
+     mirrored from Home Assistant areas -- created and updated, never deleted,
+     listing only devices, applied only if the plan is still the one shown.
+   - One bus activity at a time. Identify leaves a 3 s settle window; frames
+     and alerts during any activity carry `during: <activity>`, scans still
+     also `during_scan`. Gear learning ignores levels during a scan or identify.
+   - `device_management` still turns all of it off.
+
+   Still unreachable: raw frames, group/broadcast/zone control, settings
+   stored in drivers, `PUT /settings`, `PUT /info`, network settings, creating
+   or changing automations, deleting anything, reset, reboot.
 
    Deeper device configuration (fade time, min/max and power-on level, colour
    limits) would mean raw DALI configuration frames. **Not built**, and it
@@ -369,8 +407,31 @@ restart in that loop costs switch availability and breaks concentration.
 
 **Devices** — *added 16 Sep 2026.* The gateway's own device list with status
 flags, name and group editing, and the two scans, with progress, cancel, and
-the Lunatone integration reloaded in Home Assistant afterwards. See constraint
-1 for why this is the only page that writes.
+the Lunatone integration reloaded in Home Assistant afterwards. Each card also
+has blink, scenes (last known, or re-read from the driver) and diagnostics
+(energy, lamp hours against rated life, temperature, fault flags). DALI-2
+sensors are listed below the devices. See constraint 1.
+
+**Gateway** — *added 16 Sep 2026.* The gateway itself: firmware (against the
+one the decoder was checked with), each line's bus power and send blocks, its
+clock against ours and its time zone against Home Assistant's, location,
+driver polling, every automation stored on it with the devices it reaches
+and the knobs that drive those devices, zones with a mirror-from-HA-areas
+preview, and the setup history.
+
+The setup history is `lib/gateway-snapshot.js`: a copy of everything that
+describes the setup (devices without status, scenes, zones, sensors without
+values, automations, polling, settings, time zone, location), taken two
+minutes after start, nightly at 03:30 and a minute after any change from the
+app, written to `/config/gateway-snapshots` only when it differs from the last
+one. A part that failed to read is not treated as deleted. A change with no
+`gateway_write` since the previous copy raises `gateway_config_changed`.
+
+Time-of-day schedules are also *marked* in the event stream when due, by the
+gateway's clock and zone corrected for its measured drift
+(`lib/gateway-watch.js`). The marker claims nothing about the frames after it.
+Sunrise and sunset schedules are not marked: computing the gateway's idea of
+sunrise and getting it wrong would be worse than no marker.
 
 **Health** — uptime, RSS, event-loop lag, frames/min, reconnects, HA call
 success rate, gateway bus errors, clock-sync state, disk used and free, and an
@@ -412,8 +473,10 @@ Standalone (systemd), there is no such gate: the UI binds `127.0.0.1` by
 default, and binding anywhere else **requires** `UI_TOKEN` or the daemon refuses
 to start. Mutating routes are POST/PUT only and reject cross-origin requests.
 
-There is no route, anywhere, that can send a DALI frame. The gateway module
-issues `GET` only, and a test asserts the module contains no other method.
+There is no route that can send a raw DALI frame. Every gateway request goes
+through the table in `lib/gateway-http.js` (constraint 1), a test pins that
+table, and a source scan fails the build if raw frames, group, broadcast or
+zone control, reset or reboot appear anywhere in `lib/` or `index.js`.
 
 ---
 
@@ -702,6 +765,25 @@ would otherwise be diagnosed as haunted hardware.
    local midnight as intended.
 7. **How long does a real reconnect take against the real gateway?** Against the
    fake it is about a second. It sets how much of a gesture a stall costs.
+8. **The gateway API features added 16 Sep 2026 were built from the OpenAPI
+   schema alone** -- the gateway was not reachable from the build machine. The
+   schema leaves these open, and each has a safe failure built in:
+   - The **shape of `features`** in `GET /device/{id}`. Identify reads
+     `features.switchable.status` and `features.dimmable.status`; if they are
+     not there, the Blink button is disabled and nothing is sent.
+   - The **`date` and `time` strings** of `GET /datetime`. Accepted:
+     `YYYY-MM-DD` or `DD.MM.YYYY`, and `HH:MM[:SS]`. Anything else raises
+     `gateway_clock_unreadable` once, and the clock cannot be set from the panel.
+   - Whether **`/info` carries `lines`** with `lineStatus`. If not, bus power
+     stays "not reported" and `binary_sensor.dali_bridge_bus_power` stays
+     `unavailable` -- never `on` by default.
+   - What **Home Assistant device identifiers** the Lunatone integration uses.
+     Zone mirroring matches by the knob map first and a unique exact name last;
+     an identifier ending in `device<id>` is the middle guess, and a light none
+     of the three settles is listed as unmatched.
+   - Whether **`GET /sensors`** is kept current from sensor events, or only on
+     a refresh.
+   - Whether a **diagnostics read disturbs a knob gesture** on a busy bus.
 
 ---
 

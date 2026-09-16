@@ -70,6 +70,7 @@ test('start publishes every sensor once, with the gateway not yet connected', as
   assert.deepEqual(h.writes.map((w) => w.entity_id), [
     'sensor.dali_bridge_status',
     'binary_sensor.dali_bridge_gateway',
+    'binary_sensor.dali_bridge_bus_power',
     'sensor.dali_bridge_bus_activity',
     'sensor.dali_bridge_last_gesture',
     'sensor.dali_bridge_last_alert',
@@ -80,6 +81,7 @@ test('start publishes every sensor once, with the gateway not yet connected', as
   assert.equal(h.latest('binary_sensor.dali_bridge_gateway').attributes.device_class, 'connectivity');
   assert.equal(h.latest('sensor.dali_bridge_last_gesture').state, 'unknown');
   assert.equal(h.latest('sensor.dali_bridge_last_alert').state, 'none');
+  assert.equal(h.latest('binary_sensor.dali_bridge_bus_power').state, 'unavailable', 'unknown is not powered');
   h.sensors.stop();
 });
 
@@ -228,4 +230,34 @@ test('an alert raised by our own scan traffic is not published as the last alert
   const last = h.sensors.states().find((s) => s.entity_id.endsWith('last_alert'));
   assert.equal(last.state, 'none');
   assert.equal(last.attributes.alerts_since_start, 0);
+});
+
+test('bus power follows the lines the gateway reports, and any line down is off', async () => {
+  const snapshot = { reachable: true, stalls: 0, lines: { 0: { status: 'ok', blocked: [] } } };
+  const h = harness({ liveness: { snapshot: () => snapshot } });
+  const power = () => h.sensors.states().find((s) => s.entity_id === 'binary_sensor.dali_bridge_bus_power');
+  assert.equal(power().state, 'on');
+  snapshot.lines = { 0: { status: 'ok', blocked: [] }, 1: { status: 'noPower', blocked: [] } };
+  assert.equal(power().state, 'off');
+  assert.deepEqual(power().attributes.lines[1], { status: 'noPower', blocked: [] });
+});
+
+test('extra entities are published with the rest, and a broken provider costs only itself', async () => {
+  const h = harness({ extras: [
+    () => { throw new Error('bug'); },
+    () => [{ entity_id: 'sensor.dali_bridge_l0_a2_energy', state: 1.5, attributes: { unit_of_measurement: 'kWh' } }],
+  ] });
+  h.sensors.start();
+  await h.flush();
+  assert.equal(h.latest('sensor.dali_bridge_l0_a2_energy').state, 1.5);
+  assert.ok(h.latest('sensor.dali_bridge_status'));
+  await h.sensors.stop();
+  assert.equal(h.latest('sensor.dali_bridge_l0_a2_energy').state, 'unavailable', 'nobody is updating it any more');
+});
+
+test('alerts from any of our own bus activity are not published', async () => {
+  const h = harness();
+  h.emit({ kind: 'alert', alert: 'calibration_saved', during: 'identify' });
+  const last = h.sensors.states().find((s) => s.entity_id.endsWith('last_alert'));
+  assert.equal(last.state, 'none');
 });

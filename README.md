@@ -5,11 +5,13 @@ readable events, logs it as JSONL, flags suspicious patterns — and, since the 
 controllers were switched to input-device mode, translates their knob gestures into
 Home Assistant calls.
 
-**The bus is read-only, with one narrow exception.** The daemon never transmits a DALI
-frame on its own and cannot send raw frames. Lights are changed by asking Home Assistant,
-which asks the gateway. The exception is the panel's Devices page: when a person presses
-the button, it asks the gateway API for a scan (refresh or add new devices, never a new
-installation) or to change a device's name or groups. See `lib/gateway-admin.js`.
+**The bus is read-only, except when a person presses a button.** The daemon cannot send
+raw frames. Lights are changed by asking Home Assistant, which asks the gateway. The
+panel's Devices and Gateway pages can ask the gateway API for a scan (never a new
+installation), a device's name or groups, a blink, diagnostics and scene reads, and the
+gateway's polling, clock, location and zones -- each on a button press. Diagnostics can
+also run on a schedule, only if `diagnostics_interval_hours` is set. Every request the
+bridge may make is one table in `lib/gateway-http.js`; see `docs/DESIGN.md` constraint 1.
 
 Zero dependencies, Node 22+.
 
@@ -398,6 +400,14 @@ Console output is one line per event, meant for `journalctl -f`:
 | `gateway_probe_unavailable` | No probe endpoint on this firmware, so stall detection is **off** — silence alone cannot tell a dead socket from a quiet bus. |
 | `gateway_bus_errors` | The gateway reports bus faults of its own. Once per distinct fault, not once per probe. |
 | `device_map_problem` | One `devices.json` entry was skipped. The rest of the map is in force. |
+| `dali_bus_power_lost` / `dali_bus_power_low` / `dali_bus_power_restored` / `dali_line_unreachable` | A line's status in the gateway's `/info`, read by the liveness probe. On change only. |
+| `gateway_send_blocked` / `gateway_send_unblocked` | The gateway reports it cannot send on a line (initialising, quiescent, macro running, buffer full). |
+| `gateway_config_changed` | A setup snapshot differs from the previous one and no `gateway_write` happened in between. |
+| `gateway_firmware_changed` / `gateway_firmware_unverified` | Between snapshots; or at startup, not the firmware the decoder was checked with. |
+| `gateway_clock_drift` / `gateway_clock_ok` / `gateway_clock_unreadable` / `gateway_timezone_mismatch` | The gateway's clock, checked every 15 minutes. |
+| `driver_reports_failure` | A diagnostics read found DALI part 253 failure flags set. |
+| `identify_restore_failed` | A blink could not restore the light. |
+| `diagnostics_pass_abandoned` | A scheduled diagnostics pass waited ten minutes for a quiet bus and gave up until the next interval. |
 | `uncaught_exception` / `unhandled_rejection` | Written to the capture just before exiting non-zero. |
 
 ## What the first real capture showed
@@ -489,7 +499,14 @@ lib/clock.js        monotonic time for intervals; clock-step detection
 lib/watchdog.js     worker thread that kills a wedged process
 lib/lock.js         one instance per machine
 lib/liveness.js     read-only gateway probe; half-open socket detection
-lib/gateway-admin.js  gateway device list, scans, names and groups -- the only bus writes
+lib/gateway-http.js   every request the bridge may make of the gateway, in one table, with body checks
+lib/gateway-admin.js  bus activities: scans, names and groups, identify, diagnostics, scene/sensor re-reads
+lib/gateway-config.js gateway settings: polling, clock, location, zones mirrored from HA areas
+lib/gateway-read.js   stored gateway data, automation targets resolved to devices and knobs, clock drift
+lib/gateway-snapshot.js  setup copies, written on change, and their diff
+lib/gateway-watch.js  clock and firmware checks; markers when a gateway schedule is due
+lib/gateway-telemetry.js  diagnostics and sensor values, optional scheduled read, HA entities
+lib/zoned-time.js     wall time in a named time zone, and the gateway's date formats
 lib/ha-sensors.js   optional status sensors published into Home Assistant
 lib/options.js      app / Supervisor runtime adapters
 config.yaml         app manifest -- the repo root IS the app directory

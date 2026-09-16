@@ -21,6 +21,7 @@
   <button class="tab is-on" data-panel="now" role="tab">Now</button>
   <button class="tab" data-panel="commission" role="tab">Commission</button>
   <button class="tab" data-panel="gateway" role="tab">Devices</button>
+  <button class="tab" data-panel="hub" role="tab">Gateway</button>
   <button class="tab" data-panel="health" role="tab">Health</button>
 </nav>
 
@@ -125,6 +126,76 @@
 
     <div class="empty" id="gw-empty" hidden></div>
     <div id="gw-devices"></div>
+
+    <div class="section" id="gw-sensors-box" hidden>
+      <div class="section-head">
+        <h2>Sensors</h2>
+        <button class="btn" id="sensors-refresh">Re-read from the bus</button>
+      </div>
+      <p class="hint">DALI-2 sensors the gateway knows, with the last value it
+      holds. Re-reading asks each sensor over the bus.</p>
+      <div id="gw-sensors"></div>
+    </div>
+  </section>
+
+  <!-- ── Gateway (what it is, what it does by itself, its settings) ───── -->
+  <section class="panel" id="panel-hub">
+    <div class="lede">
+      <p><b>The gateway itself.</b> Its bus, its clock, what it does on its own,
+      and a copy of its setup whenever that changes.</p>
+    </div>
+    <div id="hub-banners"></div>
+
+    <div class="section">
+      <div class="section-head"><h2>Gateway and bus</h2></div>
+      <div id="hub-identity"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h2>Clock and location</h2></div>
+      <p class="hint">The gateway runs its own schedules by its own clock, in its
+      own time zone. Sunrise and sunset schedules also need its location.</p>
+      <div id="hub-clock"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h2>Driver polling</h2></div>
+      <p class="hint">How often the gateway asks each driver for its status and
+      level. This is what keeps the badges on the Devices page current. Each
+      query is two frames on the bus and two lines in the capture; the knobs
+      and this app do not need it.</p>
+      <div id="hub-polling"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h2>Runs on the gateway by itself</h2></div>
+      <p class="hint">Automations stored on the gateway. They act without Home
+      Assistant or this app, so a light they change is not explained by any
+      knob or any Home Assistant call. Read-only here.</p>
+      <div id="hub-automations"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <h2>Zones</h2>
+        <button class="btn" id="zones-plan">Mirror Home Assistant areas…</button>
+      </div>
+      <div id="hub-zone-plan"></div>
+      <div id="hub-zones"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <h2>Setup history</h2>
+        <button class="btn" id="snapshot-take">Take a copy now</button>
+      </div>
+      <p class="hint">A copy of the gateway's setup -- devices, groups, scenes,
+      zones, automations, polling, clock settings -- saved nightly and after
+      every change from this app, but only when something differs. Levels and
+      lamp status are left out: they change by themselves.</p>
+      <div id="hub-snapshots"></div>
+      <div id="hub-diff"></div>
+    </div>
   </section>
 
   <!-- ── Health ────────────────────────────────────────────────────────── -->
@@ -138,5 +209,6 @@
 </main>
 
 <script src="app.js"></script>
+<script src="gateway.js"></script>
 </body>
 </html>

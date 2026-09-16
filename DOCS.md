@@ -6,10 +6,13 @@ rotary-knob gestures into Home Assistant light calls.
 **It never transmits on the DALI bus on its own.** The bus is read through the
 gateway's monitor socket; every light change goes out through Home Assistant,
 which asks the gateway. One bad frame on a DALI bus can erase a device's
-commissioning, so the only exceptions are the scan and device-naming buttons
-on the **Devices** page, which ask the gateway to do it and only when you press
-them (see *Adding devices*). The app cannot send raw frames, and cannot start a
-new installation that re-addresses the bus.
+commissioning, so the only exceptions are buttons on the **Devices** and
+**Gateway** pages -- scan, name and groups, blink, diagnostics and scene reads,
+the gateway's polling, clock, location and zones -- which ask the gateway to do
+it and only when you press them. The one thing that can run without a button
+is the diagnostics read, and only if you set **Read driver diagnostics every
+(hours)**. The app cannot send raw frames, cannot switch groups or the whole
+bus, and cannot start a new installation that re-addresses the bus.
 
 ## Installing and updating
 
@@ -72,6 +75,10 @@ from your network.
 - **Commission** — the point of the panel. Walk the flat and turn each knob; the
   controller that just spoke jumps to the top and flashes. Give it the light it
   should drive and move on. Saving applies immediately, with no restart.
+- **Devices** — the gateway's device list: scan for new devices, names, groups,
+  blink, scenes, diagnostics, and DALI-2 sensors.
+- **Gateway** — bus power, the gateway's clock, polling, what it runs by itself,
+  zones, and a history of its setup.
 - **Health** — uptime, frame rate, memory, event-loop lag, reconnects, capture
   size, and the gateway's own firmware and bus state.
 
@@ -154,6 +161,16 @@ app: refusing to start would disable every knob in the building instead of one.
 | `gateway_scan_failed` | A scan was refused, hit a bus error or never finished |
 | `ha_integration_reload_failed` | After a scan, reload the Lunatone integration by hand |
 | `ha_sensors_disabled` | Status sensors were turned on but there is no token to publish them with |
+| `during=identify` (or `scan`, `diagnostics`…) | This alert came from the app's own bus activity |
+| `dali_bus_power_lost` / `_low` / `_restored` | The gateway reports the DALI bus power supply gone, weak, or back |
+| `gateway_send_blocked` | The gateway cannot send on a line right now; Home Assistant's light changes will not arrive |
+| `gateway_config_changed` | The gateway's setup changed and nothing in this app did it -- compare on the Gateway page |
+| `gateway_firmware_changed` / `_unverified` | The gateway's firmware changed, or is not the one the decoder was checked with |
+| `gateway_clock_drift` / `_unreadable` | The gateway's clock is a minute or more out, or its format was not understood |
+| `gateway_timezone_mismatch` | The gateway and Home Assistant are in different time zones |
+| `driver_reports_failure` | A diagnostics read found a fault flag set (open circuit, thermal shutdown…) |
+| `identify_restore_failed` | A blink could not put the light back; set it from Home Assistant |
+| `gateway_automation` | Not an alert: a schedule stored on the gateway was due. It acts without this app |
 
 ## Adding devices
 
@@ -201,6 +218,59 @@ Every request the app makes of the gateway is written to the capture as a
 `gateway_write` line, whatever **How much of the bus to capture** is set to.
 To make the page read-only, switch off **Device management from the panel**.
 
+## On a device's card: blink, scenes, diagnostics
+
+Open **Identify, scenes, diagnostics** under a device on the **Devices** page.
+
+- **Blink** switches the light full on and off three times, then puts it back
+  where it was. It reads the light's current level from the gateway first; if
+  the gateway does not report it, the button is disabled, because a light left
+  at full in the night is worse than no blink. A blink looks exactly like the
+  knob calibration confirmation, so anything it raises carries `during=identify`.
+- **Scenes** shows the scene levels the gateway last saw. **Re-read scenes from
+  the driver** asks the driver itself, over the bus.
+- **Read diagnostics** asks the driver over the bus for what DALI-2 drivers can
+  report (DALI parts 252 and 253): energy used, power, driver and lamp
+  temperature, how long the lamp has been on against its rated life, start
+  counts, supply voltage, and fault flags. Many drivers support neither part;
+  the card then says so.
+
+To read every driver regularly -- for Home Assistant's Energy dashboard, or to
+be told of a failing driver -- set **Read driver diagnostics every (hours)**.
+Each pass reads one driver at a time and waits while someone is using a knob.
+It is the only bus traffic the app makes on its own, which is why it is off
+until you set it.
+
+**Sensors** (DALI-2 occupancy, light level and the like) are listed below the
+devices, with the value the gateway holds. **Re-read from the bus** asks them.
+
+## The Gateway page
+
+- **Gateway and bus**: firmware, and each line's power. `NO POWER` means the
+  DALI bus power supply has failed: every knob and light on that line is dead,
+  however healthy everything else looks.
+- **Clock and location**: the gateway runs its own schedules by its own clock
+  and time zone. The page compares both with this server and Home Assistant,
+  and offers to fix them. *Set the clock to now* turns the gateway's network
+  time off, because a manual time only sticks that way.
+- **Driver polling**: see *The gateway polls your drivers*.
+- **Runs on the gateway by itself**: schedules, circadian curves, sequences and
+  forwarding rules stored on the gateway, with the lights they reach. If one
+  changes a light a knob also drives, it says so -- a light that moves on its
+  own is often this. When a time-of-day schedule is due, a line appears in
+  **Now**.
+- **Zones**: *Mirror Home Assistant areas…* shows what it would create and
+  change before doing anything. Lights are matched to gateway devices through
+  the knob map, the Lunatone device identifier, or an exact, unique device
+  name; anything else is listed as unmatched and left out. Zones are never
+  deleted, and a zone that also names groups is left alone.
+- **Setup history**: a copy of the gateway's setup, saved nightly and after
+  every change from the panel, but only when something differs. Click one to
+  see what changed since the copy before. The files are in
+  `/addon_configs/local_dali_bridge/gateway-snapshots`, which Home Assistant
+  backups include. If the setup changes and nothing in this app did it,
+  `gateway_config_changed` is raised.
+
 ## Status sensors in Home Assistant
 
 Turn on **Status sensors in Home Assistant** in the Configuration tab and
@@ -242,6 +312,18 @@ actions:
 and for the gateway, a state trigger on `binary_sensor.dali_bridge_gateway`
 going `off` for two minutes.
 
+Also published, when there is something to publish:
+
+| Entity | From |
+|---|---|
+| `binary_sensor.dali_bridge_bus_power` | each line's bus power, as the gateway reports it; `unavailable` until it has |
+| `sensor.dali_bridge_l0_a2_energy`, `_power`, `_temperature`, `_light_hours` | the last diagnostics read of line 0, address 2 |
+| `binary_sensor.dali_bridge_l0_a2_problem` | on when that driver reports a fault flag |
+| `sensor.dali_bridge_sensor_7`, `binary_sensor.dali_bridge_sensor_7` | DALI-2 sensor 7 on the gateway; occupancy is a binary sensor |
+
+The energy sensors are `total_increasing` in kWh, so the Energy dashboard can
+use them -- but only as often as they are read.
+
 ## The gateway polls your drivers
 
 Once devices are in the gateway's list, the gateway asks each driver about once
@@ -259,8 +341,10 @@ failure** and **on** badges on the Devices page are built from -- the same bits,
 decoded the same way. A level of `unknown (MASK)` is the driver saying it cannot
 tell, which is what a failed or missing lamp answers.
 
-It adds a few frames a second to the capture. If that is too much for the SD
-card, set **How much of the bus to capture** to `events`.
+It adds a few frames a second to the capture. Nothing in the knobs or this app
+needs it that often: on the **Gateway** page, under *Driver polling*, set it to
+every 30-60 seconds and a failed lamp still shows within a minute. Or set **How
+much of the bus to capture** to `events`.
 
 ## Captures
 

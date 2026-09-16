@@ -134,8 +134,14 @@ test('nothing in the bridge can write newInstallation:true or reach the dangerou
     const text = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(text, /newInstallation\s*:\s*true/, file);
     assert.doesNotMatch(text, /sendDali(16|24)/, `${file}: raw frames`);
-    assert.doesNotMatch(text, /\/(device|group|zone|broadcast)\/[^'"`]*\/control|broadcast\/control/, `${file}: light control through the gateway`);
-    assert.doesNotMatch(text, /['"`]\/(reset|reboot)['"`]/, `${file}: reset or reboot`);
+    assert.doesNotMatch(text, /\/(group|zone|broadcast)\/[^'"`]*\/control|broadcast\/control/, `${file}: group, zone or broadcast control`);
+    assert.doesNotMatch(text, /saveToScene|fadeRate|fadeTime\s*:/, `${file}: settings stored in the driver`);
+    assert.doesNotMatch(text, /['"`]\/(reset|reboot|ethernet)['"`]/, `${file}: reset, reboot or network settings`);
+    // Device control exists for identify alone, and only these two files may
+    // name it: the table that allows it and the module that blinks.
+    if (!/lib[\\/](gateway-http|gateway-admin)\.js$/.test(file)) {
+      assert.doesNotMatch(text, /['"`][^'"`]*\/device\/[^'"`]*\/control/, `${file}: device control outside identify`);
+    }
   }
 });
 

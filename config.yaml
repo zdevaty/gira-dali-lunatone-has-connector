@@ -10,7 +10,7 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.6.1"
+version: "0.7.0"
 slug: dali_bridge
 description: >-
   DALI bus monitor, Gira rotary bridge and device manager for a Lunatone
@@ -57,6 +57,9 @@ backup_exclude:
 
 environment:
   DEVICE_MAP: /config/devices.json
+  # Copies of the gateway's setup, kept whenever it changes. In /config so the
+  # Terminal and Samba apps can read them and backups include them.
+  SNAPSHOT_DIR: /config/gateway-snapshots
   # Bounded on purpose: if this leaks it should die and be restarted, not swap
   # the Pi until Home Assistant suffers with it.
   NODE_OPTIONS: "--max-old-space-size=128"
@@ -84,11 +87,18 @@ options:
   control_enabled: false
   # Off by default: it creates entities in Home Assistant.
   ha_sensors: false
-  # Scans and device names/groups from the panel. These are the only things
-  # that ever make the gateway put frames on the bus; off makes the Devices
-  # page read-only. A new installation (re-addressing everything) is not
-  # possible from the app either way.
+  # The panel's buttons that reach the bus or change the gateway: scans, device
+  # names and groups, blink, diagnostics and scene reads, polling, clock,
+  # location and zones. Off makes the Devices and Gateway pages read-only. A
+  # new installation (re-addressing everything) is not possible either way.
   device_management: true
+  # 0 = never. Otherwise every driver's energy and diagnostics are read over
+  # the bus this often -- the one thing the app puts on the bus without a
+  # button, which is why it is off until someone sets it.
+  diagnostics_interval_hours: 0
+  # A copy of the gateway's setup, nightly and after changes from the panel,
+  # written only when something differs. GETs only.
+  gateway_snapshots: true
   # /data is private to this app, so nothing else can read the captures until
   # the web UI can serve them. Point this at /share/dali-bridge to inspect them
   # from the Terminal or Samba apps -- at the cost of them landing in every full
@@ -109,6 +119,8 @@ schema:
   control_enabled: bool
   ha_sensors: bool
   device_management: bool
+  diagnostics_interval_hours: "int(0,168)"
+  gateway_snapshots: bool
   log_frames: "list(all|decoded|events|alerts)"
   log_retention_days: "int(0,3650)"
   log_max_mb: "int(16,102400)"

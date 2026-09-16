@@ -22,11 +22,26 @@ configuration:
   device_management:
     name: Device management from the panel
     description: >-
-      Lets the Devices page scan the bus for new devices and rename them or
-      change their groups through the gateway. These actions put frames on the
-      DALI bus, and only ever when you press the button. Off makes the page
-      read-only. Re-addressing the whole installation is never possible from
-      this app.
+      Lets the Devices and Gateway pages scan for new devices, rename them,
+      change their groups, blink a light, read diagnostics and scenes, and set
+      the gateway's polling, clock, location and zones. Only ever when you press
+      the button. Off makes both pages read-only. Re-addressing the whole
+      installation is never possible from this app.
+  diagnostics_interval_hours:
+    name: Read driver diagnostics every (hours)
+    description: >-
+      0 = only when you press Read diagnostics. Otherwise every driver's energy
+      use, lamp hours, temperature and fault flags are read over the DALI bus
+      this often, waiting while anyone is using a knob, and published into Home
+      Assistant if status sensors are on. This is the only bus traffic the app
+      makes without a button press.
+  gateway_snapshots:
+    name: Keep a history of the gateway's setup
+    description: >-
+      Nightly, and after any change from the panel, save a copy of the
+      gateway's devices, groups, scenes, zones, automations and settings to
+      /addon_configs/local_dali_bridge/gateway-snapshots -- only when something
+      differs. The Gateway page compares them. Reads only.
   log_dir:
     name: Capture directory
     description: >-

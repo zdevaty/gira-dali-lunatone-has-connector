@@ -1,11 +1,18 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 import { createDecoder } from './lib/decoder.js';
 import { createAnomalyDetector } from './lib/anomaly.js';
 import { createHaClient } from './lib/ha-client.js';
 import { createHaSensors } from './lib/ha-sensors.js';
 import { createGatewayAdmin } from './lib/gateway-admin.js';
+import { createGatewayHttp } from './lib/gateway-http.js';
+import { createGatewayReader } from './lib/gateway-read.js';
+import { createGatewayConfig } from './lib/gateway-config.js';
+import { createGatewaySnapshots } from './lib/gateway-snapshot.js';
+import { createGatewayWatch } from './lib/gateway-watch.js';
+import { createGatewayTelemetry } from './lib/gateway-telemetry.js';
 import { createController } from './lib/control.js';
 import { createGearDiscovery } from './lib/discover.js';
 import { monotonicNow, createClockWatch } from './lib/clock.js';
@@ -104,6 +111,14 @@ function loadConfig() {
     lunatoneDomain: process.env.LUNATONE_DOMAIN || 'lunatone',
     // How long a reloaded integration gets before the mapped lights are checked.
     scanReloadSettleMs: Number(process.env.SCAN_RELOAD_SETTLE_MS ?? 8000),
+    // Off unless set: a scheduled read queries every driver over the bus, and
+    // that is the one thing the bridge does on the bus without a button.
+    diagnosticsIntervalHours: Math.max(0, Number(process.env.DIAGNOSTICS_INTERVAL_HOURS ?? 0) || 0),
+    gatewaySnapshots: !['false', '0', 'no'].includes(String(process.env.GATEWAY_SNAPSHOTS ?? 'true').toLowerCase()),
+    snapshotDir: process.env.SNAPSHOT_DIR || null,
+    snapshotStartMs: Number(process.env.SNAPSHOT_START_MS ?? 120_000),
+    gatewayWatch: !['false', '0', 'no'].includes(String(process.env.GATEWAY_WATCH ?? 'true').toLowerCase()),
+    gatewayWatchStartMs: Number(process.env.GATEWAY_WATCH_START_MS ?? 20_000),
     discoverGear: ['true', '1', 'yes'].includes(String(process.env.DISCOVER_GEAR ?? '').toLowerCase()),
     brightnessGain: Number(process.env.BRIGHTNESS_GAIN) || 1,
     colourGain: Number(process.env.COLOUR_GAIN) || 1,
@@ -264,6 +279,10 @@ function formatConsoleLine(event) {
     }
     case 'gateway':
       return `${time}  gw     ${event.name} ${event.version} (${event.lines} line${event.lines === 1 ? '' : 's'}, tier ${event.tier})`;
+    case 'gateway_snapshot':
+      return `${time}  gw     snapshot (${event.reason}): ${event.changed ? `${event.changes ?? 'first'} change(s), ${event.file}` : 'no changes'}${event.first?.length ? `\n          ${event.first.join('\n          ')}` : ''}`;
+    case 'gateway_automation':
+      return `${time}  gw     ${event.automation} “${event.name}” due: ${event.summary ?? ''}${event.targets?.length ? ` → ${event.targets.join(', ')}` : ''}`;
     case 'discover': {
       if (event.step === 'device') {
         const detail =
@@ -319,6 +338,15 @@ function main() {
   let ui = null;
   let sensors = null;
   let gatewayAdmin = null;
+  let snapshots = null;
+  let gatewayWatch = null;
+  let telemetry = null;
+  // For the scheduled diagnostics read, which waits for a quiet bus, and the
+  // snapshot, which says whether a change came from this app.
+  let lastGestureAt = null;
+  let lastOwnGatewayWriteAt = null;
+  // A gateway_write after which the gateway's setup may differ.
+  const CHANGES_SETUP = new Set(['scan_finished', 'device_update', 'status_polling', 'clock', 'location', 'zone_create', 'zone_update', 'scenes_read']);
 
   // Observability. All bounded, all read-only from the UI's point of view.
   const ring = createRing(Number(process.env.UI_RING ?? 2000));
@@ -360,6 +388,11 @@ function main() {
       const seq = ring.push(event);
       ui?.broadcast(seq, event);
       sensors?.noteEvent(event);
+      if (event.kind === 'inputEvent') lastGestureAt = monotonicNow();
+      if (event.kind === 'gateway_write') {
+        lastOwnGatewayWriteAt = Date.now();
+        if (CHANGES_SETUP.has(event.action)) snapshots?.soon('after a change from this app');
+      }
     } catch {
       // A viewer or a counter is never worth a dropped gesture.
     }
@@ -382,6 +415,7 @@ function main() {
     addon_options: addonOptions ? Object.keys(addonOptions) : null,
     ha_url: config.controlEnabled || config.haSensors ? config.haUrl : null,
     ha_sensors: config.haSensors,
+    diagnostics_interval_hours: config.diagnosticsIntervalHours,
     ha_token: config.haToken ? `present (${String(config.haToken).length} chars)` : null,
     log_dir: config.logDir,
     log_frames: config.logFrames,
@@ -438,6 +472,9 @@ function main() {
     watchdog.stop();
     liveness.stop();
     gatewayAdmin?.stop();
+    snapshots?.stop();
+    gatewayWatch?.stop();
+    telemetry?.stop();
     health.stop();
     await ui?.stop().catch(() => {});
     // Its own 1.5 s bound, so "stopped" reaches HA on a deliberate restart
@@ -536,8 +573,14 @@ function main() {
     // it is still logged, but marked -- before it is emitted, or the capture
     // never sees the mark -- so neither a person nor an automation mistakes our
     // own scan for a fault.
-    const scanning = gatewayAdmin?.scanning() ?? false;
-    if (scanning && decoded.kind === 'alert') decoded.during_scan = true;
+    const ours = gatewayAdmin?.busy() ?? null;
+    const scanning = ours === 'scan';
+    // A scan and an identify both change levels; the other reads only query.
+    const levelsAreOurs = ours === 'scan' || ours === 'identify';
+    if (ours && decoded.kind === 'alert') {
+      decoded.during = ours;
+      if (scanning) decoded.during_scan = true;
+    }
     const event = emit(decoded, tsMs);
 
     // The event scheme is part of the controller's configuration. If someone flips it
@@ -555,7 +598,7 @@ function main() {
     } else if (event.kind === 'level') {
       alert = anomaly.onLevel(event.target, event.level, tsMs);
     }
-    if (alert) emit(scanning ? { ...alert, during_scan: true } : alert);
+    if (alert) emit(ours ? { ...alert, during: ours, ...(scanning ? { during_scan: true } : {}) } : alert);
 
     // Only 24-bit input events drive lights; 16-bit frames (the emergency
     // broadcast controller) are logged above and deliberately not mapped.
@@ -563,8 +606,8 @@ function main() {
     // feed them to the controller as a check on what Home Assistant reports.
     // Not during a scan: what the gear does then is the scan's doing, and
     // learning a mapping from it would be learning noise.
-    if (!scanning && controller && event.kind === 'level') controller.observeLevel(event.target, event.level);
-    if (!scanning && discovery && event.kind === 'level') discovery.observeLevel(event.target, event.level);
+    if (!levelsAreOurs && controller && event.kind === 'level') controller.observeLevel(event.target, event.level);
+    if (!levelsAreOurs && discovery && event.kind === 'level') discovery.observeLevel(event.target, event.level);
     // A knob being turned mid-probe injects levels of its own and would corrupt the
     // mapping, so hand the bus back to the person using it.
     if (discovery && event.kind === 'inputEvent') discovery.abort('a controller was used during discovery');
@@ -681,8 +724,10 @@ function main() {
   // The gateway's own device list, scans, and device names and groups -- the
   // one place the bridge asks for anything to reach the bus. See
   // lib/gateway-admin.js for exactly how little that is.
+  const gatewayHttp = createGatewayHttp({ host: config.gatewayIp });
+  const gatewayReader = createGatewayReader({ http: gatewayHttp });
   gatewayAdmin = createGatewayAdmin({
-    host: config.gatewayIp,
+    http: gatewayHttp,
     log: emit,
     onScanFinished: async (summary) => {
       if (!ha) return { ha_reload: { ok: false, reason: 'Home Assistant is not configured' } };
@@ -709,6 +754,49 @@ function main() {
     },
   });
 
+  // What the gateway stores and does by itself, watched with GETs; its
+  // settings, changed from the panel; its drivers' diagnostics and sensors.
+  const gatewayConfig = createGatewayConfig({
+    http: gatewayHttp,
+    reader: gatewayReader,
+    ha,
+    domain: config.lunatoneDomain,
+    deviceMap: () => (deviceStore ? deviceStore.get() : {}),
+    log: emit,
+  });
+  const snapshotDir = config.snapshotDir
+    ?? (config.deviceMapPath ? path.join(path.dirname(config.deviceMapPath), 'gateway-snapshots') : path.join(config.logDir, 'gateway-snapshots'));
+  snapshots = config.gatewaySnapshots
+    ? createGatewaySnapshots({
+        reader: gatewayReader,
+        dir: snapshotDir,
+        log: emit,
+        lastOwnWriteAt: () => lastOwnGatewayWriteAt,
+        startDelayMs: config.snapshotStartMs,
+      })
+    : null;
+  snapshots?.start();
+  gatewayWatch = config.gatewayWatch
+    ? createGatewayWatch({
+        reader: gatewayReader,
+        ha,
+        deviceMap: () => (deviceStore ? deviceStore.get() : {}),
+        log: emit,
+        startDelayMs: config.gatewayWatchStartMs,
+      })
+    : null;
+  gatewayWatch?.start();
+  telemetry = createGatewayTelemetry({
+    admin: gatewayAdmin,
+    reader: gatewayReader,
+    log: emit,
+    intervalHours: config.diagnosticsIntervalHours,
+    pollSensors: sensorsWanted,
+    lastGestureAt: () => lastGestureAt,
+    onChange: () => sensors?.touch(),
+  });
+  telemetry.start();
+
   // The web UI. Under the Supervisor it listens on the app network and accepts
   // ONLY the ingress proxy: Home Assistant has already authenticated whoever
   // reaches it, and no browser can reach the port directly. Standalone it binds
@@ -727,6 +815,13 @@ function main() {
       devices: deviceStore,
       gateway: gatewayAdmin,
       gatewayWrites: config.deviceManagement,
+      gatewayServices: {
+        reader: gatewayReader,
+        config: gatewayConfig,
+        snapshots,
+        watch: gatewayWatch,
+        telemetry,
+      },
       log: emit,
     });
     ui.start().catch((err) =>
@@ -744,6 +839,7 @@ function main() {
       controlEnabled: config.controlEnabled,
       gatewayHost: config.gatewayIp,
       entityFor: (address) => deviceStore?.get()?.[String(address)]?.entity ?? null,
+      extras: [() => telemetry.haStates()],
       heartbeatMs: config.haSensorsMs,
     });
     sensors.start();

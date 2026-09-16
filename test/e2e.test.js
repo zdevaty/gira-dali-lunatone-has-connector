@@ -433,3 +433,77 @@ test('a scan from the panel: exact body to the gateway, our own traffic marked, 
   assert.deepEqual(events.filter((e) => e.kind === 'gateway_write').map((e) => e.action), ['scan_start', 'scan_finished']);
   assert.equal(ha.calls.length, 0, 'no light was touched');
 });
+
+test('the gateway page end to end: identify is marked as ours, a setup copy is kept, bus power loss is an alert', async (t) => {
+  const gw = createFakeGateway();
+  const gwPort = await gw.listen();
+  gw.setDevices([{ id: 1, name: 'Line 0 DALI 00', type: 'dimmable', line: 0, address: 0, available: true, groups: [], daliTypes: [6], status: {},
+    features: { switchable: { status: true }, dimmable: { status: 35 } } }]);
+  const ha = createFakeHa();
+  const haPort = await ha.listen();
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-e2e-'));
+  const snapDir = path.join(dir, 'snapshots');
+
+  const child = spawn(process.execPath, ['index.js'], {
+    env: {
+      ...process.env,
+      GATEWAY_IP: `127.0.0.1:${gwPort}`,
+      LOG_DIR: dir,
+      CONTROL_ENABLED: 'false',
+      HA_URL: `http://127.0.0.1:${haPort}`,
+      HA_TOKEN: 'fake-test-credential',
+      UI_PORT: '0',
+      SNAPSHOT_DIR: snapDir,
+      SNAPSHOT_START_MS: '300',
+      GATEWAY_WATCH_START_MS: '300',
+      GATEWAY_PROBE_MS: '300',
+      CONSOLE: 'off',
+      WATCHDOG: 'false',
+    },
+    stdio: 'ignore',
+  });
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await gw.close();
+    await ha.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  const ui = await waitFor(() => read(dir).find((e) => e.kind === 'ui' && e.status === 'listening'));
+  await waitFor(() => read(dir).some((e) => e.kind === 'connection' && e.status === 'connected'));
+  const base = `http://127.0.0.1:${ui.port}`;
+
+  // The page and its script are served.
+  assert.match(await (await fetch(`${base}/`)).text(), /panel-hub/);
+  assert.equal((await fetch(`${base}/gateway.js`)).status, 200);
+
+  // A copy of the setup is taken shortly after start.
+  const snap = await waitFor(() => read(dir).find((e) => e.kind === 'gateway_snapshot'));
+  assert.equal(snap.changed, true);
+  assert.equal(fs.readdirSync(snapDir).filter((n) => n.endsWith('.json')).length, 1);
+
+  const overview = await (await fetch(`${base}/api/gateway/overview`)).json();
+  assert.equal(overview.info.version, 'v1.18.7/1.4.6');
+  assert.equal(overview.clock.recognised, true);
+  assert.ok(Math.abs(overview.clock.drift_s) <= 2, `drift ${overview.clock.drift_s}`);
+  assert.equal(overview.home_assistant.time_zone, 'Europe/Prague');
+
+  // Identify, with the blink it causes on the bus arriving meanwhile.
+  const identifying = fetch(`${base}/api/gateway/device/1/identify`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dali-ui': '1' }, body: '{}' });
+  await waitFor(() => gw.adminRequests.some((r) => r.path === '/device/1/control'));
+  for (const level of [254, 0, 254, 0, 254, 0, 254]) gw.send(gw.monitor(16, [0x00, level]));
+  const identified = await identifying;
+  assert.equal(identified.status, 200);
+  const blink = await waitFor(() => read(dir).find((e) => e.kind === 'alert' && e.alert === 'calibration_saved'));
+  assert.equal(blink.during, 'identify');
+  const controls = gw.adminRequests.filter((r) => r.path === '/device/1/control').map((r) => r.body);
+  assert.deepEqual(controls.at(-1), { dimmable: 35 }, 'put back where it was');
+  assert.ok(read(dir).some((e) => e.kind === 'gateway_write' && e.action === 'identify'));
+
+  // The bus power supply fails.
+  gw.setLines({ 0: { lineStatus: 'noPower', sendBlockedInitialize: false, sendBlockedQuiescent: false, sendBlockedMacroRunning: false, sendBufferFull: false } });
+  const lost = await waitFor(() => read(dir).find((e) => e.alert === 'dali_bus_power_lost'));
+  assert.equal(lost.line, 0);
+
+  assert.equal(ha.calls.length, 0, 'no Home Assistant service was called');
+});

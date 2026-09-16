@@ -2,8 +2,9 @@
 // state, and the service calls and state writes it records.
 import http from 'node:http';
 
-export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
+export function createFakeHa({ brightness = 128, kelvin = 4000, areaLights = [], config = { time_zone: 'Europe/Prague', latitude: 50.0875, longitude: 14.4213 } } = {}) {
   const calls = [];
+  const templates = [];
   const states = [];
   const reloads = [];
   const server = http.createServer((req, res) => {
@@ -13,6 +14,21 @@ export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
     };
 
     if (req.method === 'GET' && req.url === '/api/') return json({ message: 'API running.' });
+
+    if (req.method === 'GET' && req.url === '/api/config') return json({ ...config, version: '2026.9.0' });
+
+    // Only the area template the bridge sends; answered from `areaLights`,
+    // which is what that template renders to.
+    if (req.method === 'POST' && req.url === '/api/template') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        templates.push(body);
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end(JSON.stringify(areaLights));
+      });
+      return;
+    }
 
     if (req.method === 'GET' && req.url === '/api/states') {
       return json([{ entity_id: 'light.line_0_dali_00', state: 'on', attributes: { friendly_name: 'Line 0 DALI 00', supported_color_modes: ['color_temp'] } }]);
@@ -67,6 +83,7 @@ export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
 
   return {
     calls,
+    templates,
     states,
     reloads,
     listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port))),
