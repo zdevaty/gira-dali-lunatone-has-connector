@@ -59,13 +59,14 @@ test('the clock is set in the zone and format the gateway itself uses, with netw
   const h = await setup();
   t.after(h.close);
   h.gw.state.datetimeLive = false;
-  h.gw.state.datetime = { timezone: 'Europe/Prague', automatic_time: true, date: '16.09.2026', time: '19:00' };
+  // The real gateway's shape, and a clock seven years behind.
+  h.gw.state.datetime = { timezone: 'Europe/Prague', automatic_time: true, date: '14. February 2019', time: '13:05:08' };
   const r = await h.config.setClock({ set_now: true });
   assert.equal(r.ok, true);
   const [[, path, body]] = h.writes();
   assert.equal(path, '/datetime');
-  assert.match(body.date, /^\d{2}\.\d{2}\.\d{4}$/);
-  assert.match(body.time, /^\d{2}:\d{2}$/);
+  assert.match(body.date, /^\d{1,2}\. [A-Z][a-z]+ \d{4}$/);
+  assert.match(body.time, /^\d{2}:\d{2}:\d{2}$/);
   assert.equal(body.automatic_time, false);
   assert.deepEqual(Object.keys(body).sort(), ['automatic_time', 'date', 'time']);
 });

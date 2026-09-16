@@ -26,6 +26,12 @@ test('across a DST change the conversion still lands on a real instant', () => {
 test('the gateway\'s date and time are read in the shapes worth accepting, and nothing else', () => {
   assert.deepEqual(parseGatewayDateTime('2026-09-16', '19:49:39').wall, { year: 2026, month: 9, day: 16, hour: 19, minute: 49, second: 39 });
   assert.equal(parseGatewayDateTime('16.09.2026', '19:49').dateShape, 'dotted');
+  // Firmware 1.18.7/1.4.6, as reported by the real gateway.
+  const real = parseGatewayDateTime('14. February 2019', '13:05:08');
+  assert.deepEqual(real.wall, { year: 2019, month: 2, day: 14, hour: 13, minute: 5, second: 8 });
+  assert.equal(real.dateShape, 'dayMonthName');
+  assert.equal(parseGatewayDateTime('4. march 2019', '13:05:08').wall.month, 3);
+  assert.equal(parseGatewayDateTime('14. Febtober 2019', '13:05:08'), null);
   assert.equal(parseGatewayDateTime('2026-09-16', '19:49:39.123').timeShape, 'hms');
   // Ambiguous or strange: not guessed at.
   assert.equal(parseGatewayDateTime('09/16/2026', '19:49:39'), null);
@@ -38,6 +44,8 @@ test('the clock is written back in the format it was read in', () => {
   const at = Date.parse('2026-09-16T17:30:05Z');
   assert.deepEqual(formatGatewayDateTime(at, 'Europe/Prague', { dateShape: 'iso', timeShape: 'hms' }), { date: '2026-09-16', time: '19:30:05' });
   assert.deepEqual(formatGatewayDateTime(at, 'Europe/Prague', { dateShape: 'dotted', timeShape: 'hm' }), { date: '16.09.2026', time: '19:30' });
+  assert.deepEqual(formatGatewayDateTime(at, 'Europe/Prague', { dateShape: 'dayMonthName', timeShape: 'hms' }), { date: '16. September 2026', time: '19:30:05' });
+  assert.equal(formatGatewayDateTime(Date.parse('2026-03-04T12:00:00Z'), 'UTC', { dateShape: 'dayMonthName', timeShape: 'hms' }).date, '4. March 2026');
   assert.equal(isValidTimeZone('Mars/Olympus'), false);
 });
 

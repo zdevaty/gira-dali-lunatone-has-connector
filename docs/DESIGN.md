@@ -771,8 +771,11 @@ would otherwise be diagnosed as haunted hardware.
    - The **shape of `features`** in `GET /device/{id}`. Identify reads
      `features.switchable.status` and `features.dimmable.status`; if they are
      not there, the Blink button is disabled and nothing is sent.
-   - The **`date` and `time` strings** of `GET /datetime`. Accepted:
-     `YYYY-MM-DD` or `DD.MM.YYYY`, and `HH:MM[:SS]`. Anything else raises
+   - ~~The **`date` and `time` strings** of `GET /datetime`.~~ **Answered on
+     the Pi, 16 Sep:** `"14. February 2019"` and `"13:05:08"` -- and the clock
+     itself was seven years behind. That shape is now read and written back;
+     whether `POST /datetime` accepts it in return, and whether a single-digit
+     day is padded, is still to be seen. Anything unrecognised raises
      `gateway_clock_unreadable` once, and the clock cannot be set from the panel.
    - Whether **`/info` carries `lines`** with `lineStatus`. If not, bus power
      stays "not reported" and `binary_sensor.dali_bridge_bus_power` stays
