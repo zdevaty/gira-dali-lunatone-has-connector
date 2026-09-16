@@ -768,9 +768,13 @@ would otherwise be diagnosed as haunted hardware.
 8. **The gateway API features added 16 Sep 2026 were built from the OpenAPI
    schema alone** -- the gateway was not reachable from the build machine. The
    schema leaves these open, and each has a safe failure built in:
-   - The **shape of `features`** in `GET /device/{id}`. Identify reads
-     `features.switchable.status` and `features.dimmable.status`; if they are
-     not there, the Blink button is disabled and nothing is sent.
+   - ~~The **shape of `features`** in `GET /device/{id}`.~~ **Answered on the
+     Pi, 16 Sep:** identify reads `features.switchable.status` and
+     `features.dimmable.status`, and Blink worked and put the lights back. Had
+     they been missing, the button would have been disabled and nothing sent.
+   - **Diagnostics on these drivers: none.** Both drivers answered that they
+     implement neither DALI part 252 nor 253, so on this installation there is
+     nothing for `diagnostics_interval_hours` to read; leave it at 0.
    - ~~The **`date` and `time` strings** of `GET /datetime`.~~ **Answered on
      the Pi, 16 Sep:** `"14. February 2019"` and `"13:05:08"` -- and the clock
      itself was seven years behind. That shape is now read and written back;
@@ -788,7 +792,8 @@ would otherwise be diagnosed as haunted hardware.
      of the three settles is listed as unmatched.
    - Whether **`GET /sensors`** is kept current from sensor events, or only on
      a refresh.
-   - Whether a **diagnostics read disturbs a knob gesture** on a busy bus.
+   - Whether a **diagnostics read disturbs a knob gesture** on a busy bus --
+     moot here until a driver that supports it is installed.
 
 ---
 
