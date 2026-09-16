@@ -10,12 +10,12 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.8.0"
+version: "0.8.1"
 slug: dali_bridge
 description: >-
   DALI bus monitor, Gira rotary bridge and device manager for a Lunatone
   DALI-2 IoT gateway. Watches the bus; writes only when you press a button.
-url: https://github.com/zdenekdevaty/dali-bridge
+url: https://github.com/zdevaty/gira-dali-lunatone-has-connector
 stage: experimental
 
 arch:
@@ -110,10 +110,10 @@ options:
   log_retention_days: 30
   log_max_mb: 512
   log_min_free_mb: 256
-  # `pretty` by default: this is a debugging tool first, and a first run that
-  # prints nothing is indistinguishable from a broken one. `quiet` drops the
-  # per-frame bus traffic once it is just running.
-  console: pretty
+  # `quiet`: alerts, gestures and what was sent, not every frame. The gateway
+  # polls its drivers several times a second, and this log is on the SD card.
+  # Set `pretty` while debugging; the Now page shows every frame either way.
+  console: quiet
 
 schema:
   gateway_host: str

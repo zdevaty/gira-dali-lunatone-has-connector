@@ -147,3 +147,16 @@ test('the device list says which lights can be identified', async (t) => {
   const list = await h.admin.listDevices();
   assert.deepEqual(list.devices.map((d) => [d.id, d.identifiable]), [[1, true], [2, true], [3, false]]);
 });
+
+test('stopping mid-blink cuts it short and still puts the light back', async (t) => {
+  const h = await setup({ adminOptions: { blinkMs: 40 } });
+  t.after(h.close);
+  const blink = h.admin.identify(1);
+  await new Promise((r) => setTimeout(r, 60));
+  await h.admin.stop();
+  const sent = h.controls(1);
+  assert.ok(sent.length < 7, `cut short: ${JSON.stringify(sent)}`);
+  assert.deepEqual(sent.at(-1), { dimmable: 42 }, 'the light is back before stop resolves');
+  await blink;
+  assert.equal((await h.admin.identify(1)).code, 503, 'no new blink once stopping');
+});

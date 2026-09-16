@@ -62,7 +62,7 @@ npm test   # 147 tests, all offline
 | `WATCHDOG_TIMEOUT_MS` | `15000` | How long the event loop may be unresponsive first. |
 | `GATEWAY_PROBE_PATH` | `/info` | Read-only endpoint used as a second opinion on whether the gateway is alive. |
 | `GATEWAY_PROBE_MS` | `30000` | How often to ask it. |
-| `GATEWAY_IDLE_MS` | `120000` | Socket silence, with the gateway answering HTTP, before the socket is treated as dead. Doubles up to an hour while the bus stays genuinely quiet. |
+| `GATEWAY_IDLE_MS` | `30000` | Socket silence, with the gateway answering HTTP, before the socket is treated as dead. Doubles up to an hour while the bus stays genuinely quiet. |
 
 The daemon refuses to start with a plain error (no stack trace) if `GATEWAY_IP`/`LOG_DIR`
 are missing, or if control is enabled without `HA_TOKEN`/`DEVICE_MAP`.

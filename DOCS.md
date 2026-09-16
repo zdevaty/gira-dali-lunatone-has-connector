@@ -63,6 +63,15 @@ If step 3 reports nothing to update, the store index is still stale; run
 the same slug. The old `ha addons` spelling still works as an alias. A rebuild
 takes a minute or two on a Pi 4.
 
+## Turn on Watchdog
+
+On the app's **Info** tab, switch **Watchdog** on. Without it, Home Assistant
+does not restart the app when it crashes -- and the app deliberately kills
+itself if it ever freezes, counting on that restart. With it off, either leaves
+every knob dead until someone starts the app by hand.
+
+Also leave **Start on boot** on.
+
 ## The DALI panel
 
 Once the app is running there is a **DALI** entry in the Home Assistant sidebar.

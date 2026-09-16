@@ -28,7 +28,9 @@ import { createHealth } from './lib/health.js';
 import { createCensus } from './lib/census.js';
 import { createUiServer } from './lib/ui/server.js';
 
-const MAX_BACKOFF_MS = 60_000;
+// Short on purpose: the gateway is on the LAN, a failed attempt costs nothing,
+// and every second of backoff after it comes back is a second of dead knobs.
+const MAX_BACKOFF_MS = 10_000;
 // How long a link must hold before its backoff is forgiven. A gateway that
 // accepts a connection and immediately drops it would otherwise reset the
 // backoff on every attempt and be retried once a second, forever.
@@ -128,11 +130,25 @@ function loadConfig() {
     logMinFreeMb: Number(process.env.LOG_MIN_FREE_MB ?? 256),
     gatewayProbePath: process.env.GATEWAY_PROBE_PATH || '/info',
     gatewayProbeMs: Number(process.env.GATEWAY_PROBE_MS ?? 30_000),
-    gatewayIdleMs: Number(process.env.GATEWAY_IDLE_MS ?? 120_000),
+    // The gateway polls its drivers, so a live bus is rarely silent for long; a
+    // genuinely quiet one still doubles this, up to an hour (lib/liveness.js).
+    gatewayIdleMs: Number(process.env.GATEWAY_IDLE_MS ?? 30_000),
     uiEnabled: !['false', '0', 'no'].includes(String(process.env.UI ?? 'true').toLowerCase()),
     uiPort: Number(process.env.UI_PORT ?? 8099),
     uiBind: process.env.UI_BIND || null,
   };
+}
+
+// Outside Home Assistant nothing authenticates the web UI, and it can scan the
+// bus, blink lights and change the gateway. So it listens on loopback only;
+// reach it through an SSH tunnel rather than a LAN address.
+function checkUiBind(config, supervised) {
+  if (supervised || !config.uiEnabled || !config.uiBind) return;
+  if (['127.0.0.1', '::1', 'localhost'].includes(config.uiBind)) return;
+  fatal(
+    `dali-logger: UI_BIND=${config.uiBind} would expose the web UI, which has no login, to the network.`,
+    'Outside Home Assistant it only binds to loopback. Use an SSH tunnel: ssh -L 8099:127.0.0.1:8099 <host>',
+  );
 }
 
 function loadChoice(name, allowed, fallback) {
@@ -319,6 +335,7 @@ function main() {
   const supervised = applySupervisorEnvironment();
 
   const config = loadConfig();
+  checkUiBind(config, supervised);
 
   fs.mkdirSync(config.logDir, { recursive: true });
   const lock = acquireLock(config.logDir);
@@ -484,7 +501,6 @@ function main() {
     emit({ kind: 'connection', status: 'shutdown', signal });
     watchdog.stop();
     liveness.stop();
-    gatewayAdmin?.stop();
     snapshots?.stop();
     gatewayWatch?.stop();
     telemetry?.stop();
@@ -496,7 +512,8 @@ function main() {
     // Bounded: the Supervisor sends SIGKILL ten seconds after SIGTERM, and a
     // hung Home Assistant call must not spend that budget.
     await Promise.race([
-      Promise.all([controller ? controller.settled() : null, store.close()]),
+      // A blink in progress is cut short and its light put back first.
+      Promise.all([controller ? controller.settled() : null, gatewayAdmin?.stop(), store.close()]),
       new Promise((resolve) => setTimeout(resolve, SHUTDOWN_BUDGET_MS)),
     ]).catch(() => {});
     store.drainSync();

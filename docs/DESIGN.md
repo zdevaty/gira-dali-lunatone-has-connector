@@ -480,9 +480,9 @@ Under ingress, HA has already authenticated the viewer, so the app adds no
 login — but it **only accepts connections from `172.30.32.2`** (the Supervisor),
 per the ingress requirement, and the port is never published to the LAN.
 
-Standalone (systemd), there is no such gate: the UI binds `127.0.0.1` by
-default, and binding anywhere else **requires** `UI_TOKEN` or the daemon refuses
-to start. Mutating routes are POST/PUT only and reject cross-origin requests.
+Standalone (systemd), there is no such gate: the UI binds `127.0.0.1`, and a
+non-loopback `UI_BIND` is refused at startup -- there is no login to put in
+front of it. Use an SSH tunnel. Mutating routes are POST/PUT only and reject cross-origin requests.
 
 There is no route that can send a raw DALI frame. Every gateway request goes
 through the table in `lib/gateway-http.js` (constraint 1), a test pins that
