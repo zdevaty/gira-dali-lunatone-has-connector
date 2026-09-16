@@ -1,9 +1,10 @@
 // Just enough Home Assistant to answer the daemon: the API probe, one light's
-// state, and the service calls it records.
+// state, and the service calls and state writes it records.
 import http from 'node:http';
 
 export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
   const calls = [];
+  const states = [];
   const server = http.createServer((req, res) => {
     const json = (body) => {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -26,6 +27,17 @@ export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
       });
     }
 
+    if (req.method === 'POST' && req.url.startsWith('/api/states/')) {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        const entity_id = decodeURIComponent(req.url.slice('/api/states/'.length));
+        try { states.push({ entity_id, auth: req.headers.authorization, ...JSON.parse(body) }); } catch { states.push({ entity_id, raw: body }); }
+        json({ entity_id });
+      });
+      return;
+    }
+
     if (req.method === 'POST' && req.url.startsWith('/api/services/')) {
       let body = '';
       req.on('data', (c) => { body += c; });
@@ -42,6 +54,7 @@ export function createFakeHa({ brightness = 128, kelvin = 4000 } = {}) {
 
   return {
     calls,
+    states,
     listen: () => new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port))),
     close: () => new Promise((r) => server.close(() => r())),
   };

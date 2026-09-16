@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { createDecoder } from './lib/decoder.js';
 import { createAnomalyDetector } from './lib/anomaly.js';
 import { createHaClient } from './lib/ha-client.js';
+import { createHaSensors } from './lib/ha-sensors.js';
 import { createController } from './lib/control.js';
 import { createGearDiscovery } from './lib/discover.js';
 import { monotonicNow, createClockWatch } from './lib/clock.js';
@@ -93,6 +94,9 @@ function loadConfig() {
     speedCurve: loadSpeedCurve(process.env.SPEED_CURVE),
     rampEveryReports: Number(process.env.RAMP_EVERY_REPORTS) || 2,
     levelDivergence: Number(process.env.LEVEL_DIVERGENCE ?? 20),
+    // Opt-in: it creates entities in someone's Home Assistant.
+    haSensors: ['true', '1', 'yes'].includes(String(process.env.HA_SENSORS ?? '').toLowerCase()),
+    haSensorsMs: Number(process.env.HA_SENSORS_MS ?? 60_000),
     discoverGear: ['true', '1', 'yes'].includes(String(process.env.DISCOVER_GEAR ?? '').toLowerCase()),
     brightnessGain: Number(process.env.BRIGHTNESS_GAIN) || 1,
     colourGain: Number(process.env.COLOUR_GAIN) || 1,
@@ -284,8 +288,9 @@ function main() {
     log: (event) => emit(event),
   });
 
-  // Declared before emit(), which broadcasts to it as events happen.
+  // Declared before emit(), which broadcasts to them as events happen.
   let ui = null;
+  let sensors = null;
 
   // Observability. All bounded, all read-only from the UI's point of view.
   const ring = createRing(Number(process.env.UI_RING ?? 2000));
@@ -326,6 +331,7 @@ function main() {
       census.note(event);
       const seq = ring.push(event);
       ui?.broadcast(seq, event);
+      sensors?.noteEvent(event);
     } catch {
       // A viewer or a counter is never worth a dropped gesture.
     }
@@ -346,7 +352,8 @@ function main() {
     control: config.controlEnabled,
     runtime: supervised ? 'ha-addon' : 'standalone',
     addon_options: addonOptions ? Object.keys(addonOptions) : null,
-    ha_url: config.controlEnabled ? config.haUrl : null,
+    ha_url: config.controlEnabled || config.haSensors ? config.haUrl : null,
+    ha_sensors: config.haSensors,
     ha_token: config.haToken ? `present (${String(config.haToken).length} chars)` : null,
     log_dir: config.logDir,
     log_frames: config.logFrames,
@@ -404,6 +411,9 @@ function main() {
     liveness.stop();
     health.stop();
     await ui?.stop().catch(() => {});
+    // Its own 1.5 s bound, so "stopped" reaches HA on a deliberate restart
+    // without eating the budget below.
+    await sensors?.stop().catch(() => {});
     // Bounded: the Supervisor sends SIGKILL ten seconds after SIGTERM, and a
     // hung Home Assistant call must not spend that budget.
     await Promise.race([
@@ -417,7 +427,15 @@ function main() {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  const ha = config.controlEnabled
+  // The sensors need a token and nothing else; control needs one too. Without
+  // one the sensors are skipped and said to be, never fatal: they are a view of
+  // the bridge, not part of it.
+  const sensorsWanted = config.haSensors && Boolean(config.haToken);
+  if (config.haSensors && !config.haToken) {
+    emit({ kind: 'alert', alert: 'ha_sensors_disabled', reason: 'no Home Assistant token',
+      note: 'set HA_TOKEN, or run as the Home Assistant app, which provides one' });
+  }
+  const ha = config.controlEnabled || sensorsWanted
     ? createHaClient({ url: config.haUrl, token: config.haToken, log: emit })
     : null;
 
@@ -643,7 +661,21 @@ function main() {
     );
   }
 
-  if (ha) {
+  if (sensorsWanted) {
+    sensors = createHaSensors({
+      ha,
+      health,
+      liveness,
+      version: VERSION,
+      controlEnabled: config.controlEnabled,
+      gatewayHost: config.gatewayIp,
+      entityFor: (address) => deviceStore?.get()?.[String(address)]?.entity ?? null,
+      heartbeatMs: config.haSensorsMs,
+    });
+    sensors.start();
+  }
+
+  if (controller) {
     ha.preflight(deviceStore ? deviceStore.get() : {})
       .then((ok) => {
         if (!ok) {

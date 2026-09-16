@@ -146,6 +146,48 @@ app: refusing to start would disable every knob in the building instead of one.
 | `clock_step` | The system clock jumped; timestamps across it are not comparable |
 | `watchdog_kill` | The event loop wedged and the process was killed to recover |
 | `unexpected_event_scheme` | A controller is not using device/instance addressing |
+| `ha_sensors_disabled` | Status sensors were turned on but there is no token to publish them with |
+
+## Status sensors in Home Assistant
+
+Turn on **Status sensors in Home Assistant** in the Configuration tab and
+restart the app. It then publishes:
+
+| Entity | State | Worth knowing |
+|---|---|---|
+| `sensor.dali_bridge_status` | `running` / `stopped` | `version`, `started`, and `last_seen`, which moves every minute |
+| `binary_sensor.dali_bridge_gateway` | `on` when connected to the gateway | `http_reachable`, `stalls`, `disconnects` |
+| `sensor.dali_bridge_bus_activity` | frames per minute | Zero for hours is normal at night |
+| `sensor.dali_bridge_last_gesture` | when a knob was last used | `device` and the `light` it is mapped to |
+| `sensor.dali_bridge_last_alert` | the latest alert's name | `at`, `alerts_since_start` |
+
+They update every minute, and within about five seconds when the gateway
+connects or drops or an alert fires. Knob turns never cause a write of their
+own, so the sensors cannot slow a light down.
+
+These are not full entities: they have no unique ID, so they cannot be renamed
+or put in an area, and **Home Assistant forgets them when it restarts** until
+the bridge writes them again, within a minute. Automations that read them
+should tolerate a minute of `unavailable` after an HA restart.
+
+A deliberate stop says `stopped`. A crash or a power cut says nothing, so to
+be told the bridge has gone quiet, watch `last_seen`:
+
+```yaml
+alias: DALI bridge silent
+triggers:
+  - trigger: template
+    value_template: >-
+      {% set seen = state_attr('sensor.dali_bridge_status', 'last_seen') %}
+      {{ seen is not none and now() - as_datetime(seen) > timedelta(minutes=5) }}
+actions:
+  - action: notify.notify
+    data:
+      message: The DALI bridge has not reported for five minutes. The knobs may be dead.
+```
+
+and for the gateway, a state trigger on `binary_sensor.dali_bridge_gateway`
+going `off` for two minutes.
 
 ## Captures
 

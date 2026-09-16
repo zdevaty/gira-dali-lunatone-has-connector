@@ -307,3 +307,48 @@ test('quiet console still shows what happened, just not every frame', async (t) 
   assert.match(out, /generic start_right/, 'a knob being turned is not "every frame"');
   assert.doesNotMatch(out, /level 150/, 'but the per-frame bus traffic is still suppressed');
 });
+
+test('status sensors reach Home Assistant, even with control off, and say stopped on the way out', async (t) => {
+  const gw = createFakeGateway();
+  const gwPort = await gw.listen();
+  const ha = createFakeHa();
+  const haPort = await ha.listen();
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-e2e-'));
+
+  const child = spawn(process.execPath, ['index.js'], {
+    env: {
+      ...process.env,
+      GATEWAY_IP: `127.0.0.1:${gwPort}`,
+      LOG_DIR: dir,
+      CONTROL_ENABLED: 'false',
+      HA_SENSORS: 'true',
+      HA_URL: `http://127.0.0.1:${haPort}`,
+      HA_TOKEN: 'fake-test-credential',
+      CONSOLE: 'off',
+      WATCHDOG: 'false',
+      UI: 'false',
+    },
+    stdio: 'ignore',
+  });
+
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await gw.close();
+    await ha.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  const latest = (id) => [...ha.states].reverse().find((s) => s.entity_id === id);
+
+  await waitFor(() => latest('sensor.dali_bridge_status')?.state === 'running');
+  assert.equal(latest('sensor.dali_bridge_status').auth, 'Bearer fake-test-credential');
+
+  // Connecting is worth a write within seconds, not at the minute heartbeat.
+  await waitFor(() => latest('binary_sensor.dali_bridge_gateway')?.state === 'on', { timeoutMs: 10_000 });
+
+  child.kill('SIGTERM');
+  await new Promise((resolve) => child.on('exit', resolve));
+  assert.equal(latest('sensor.dali_bridge_status').state, 'stopped');
+  assert.equal(latest('binary_sensor.dali_bridge_gateway').state, 'unavailable');
+  assert.equal(ha.calls.length, 0, 'control is off: the sensors must not have turned into light calls');
+});

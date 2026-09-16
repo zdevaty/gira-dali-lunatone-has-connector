@@ -11,6 +11,14 @@ configuration:
       Off: watch and log the bus only, changing nothing. On: turn Gira knob
       gestures into Home Assistant calls. Leave this off for the first run so
       you can confirm the bus looks right before anything acts on it.
+  ha_sensors:
+    name: Status sensors in Home Assistant
+    description: >-
+      Publish the bridge's own state as sensor.dali_bridge_status,
+      binary_sensor.dali_bridge_gateway, sensor.dali_bridge_bus_activity,
+      sensor.dali_bridge_last_gesture and sensor.dali_bridge_last_alert, for
+      dashboards and automations. Updated every minute, and within seconds when
+      the gateway drops or an alert fires.
   log_dir:
     name: Capture directory
     description: >-

@@ -12,7 +12,7 @@ started from.
 | 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection. |
 | 2 — deploy | **Done and running.** Installed as `local_dali_bridge` on the Pi, control enabled, one room mapped and behaving. |
 | 3 — web UI | **Mostly done.** Now, Commission and Health ship in the sidebar panel. Captures and Tuning are not built. |
-| 4 — setup features | **Partly.** Commissioning and the device map are in the UI, applied without a restart. Discovery is not driveable from the page yet, and the optional Home Assistant status sensors are not built. |
+| 4 — setup features | **Partly.** Commissioning and the device map are in the UI, applied without a restart. The optional Home Assistant status sensors are built (`lib/ha-sensors.js`, `ha_sensors` option): state-machine entities written on a one-minute heartbeat and a few seconds after a gateway change or alert, never on a gesture. Discovery is not driveable from the page yet. |
 | 5 — cutover | **Done** in the sense that the Pi is the only bridge. **The chaos checklist below has not been run**, so "extremely reliable" remains a design claim rather than a tested property. |
 
 ### Found by running it, after deployment
@@ -171,7 +171,7 @@ src/
     discover.js      UNCHANGED
   ha/
     client.js        REST; SUPERVISOR_TOKEN or long-lived token
-    sensors.js       optional: publish status sensors into HA
+    ha-sensors.js    optional: publish status sensors into HA
   obs/
     logstore.js      buffered async JSONL, rotation, retention, disk floor
     ring.js          fixed-size in-memory recent events
