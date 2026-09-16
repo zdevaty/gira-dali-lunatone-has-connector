@@ -12,17 +12,69 @@ const tmp = () => fsp.mkdtemp(path.join(os.tmpdir(), 'dali-life-'));
 
 // --- single instance ---------------------------------------------------------
 
+const lockUrl = pathToFileURL(path.resolve('lib/lock.js')).href;
+
+// A real second process holds the lock: one process asking twice is, correctly,
+// not two instances.
+async function holdLockInChild(dir) {
+  const child = spawn(
+    process.execPath,
+    ['--input-type=module', '-e', `
+import { acquireLock } from ${JSON.stringify(lockUrl)};
+const lock = acquireLock(${JSON.stringify(dir)});
+process.stdout.write(lock.ok ? 'held\\n' : 'refused\\n');
+process.on('SIGTERM', () => { lock.release(); process.exit(0); });
+setInterval(() => {}, 1000);
+`],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  const first = await new Promise((resolve) => child.stdout.once('data', (d) => resolve(String(d).trim())));
+  assert.equal(first, 'held');
+  const stop = () => new Promise((resolve) => { child.once('exit', resolve); child.kill('SIGTERM'); });
+  return { child, stop };
+}
+
+const writeLock = (dir, fields) =>
+  fs.writeFileSync(
+    path.join(dir, '.dali-bridge.lock'),
+    JSON.stringify({ host: os.hostname(), started: '2020-01-01T00:00:00.000Z', ...fields }) + '\n',
+  );
+
 test('a second instance on the same machine is refused', async () => {
   const dir = await tmp();
-  const first = acquireLock(dir);
-  assert.equal(first.ok, true);
+  const { child, stop } = await holdLockInChild(dir);
 
   const second = acquireLock(dir);
   assert.equal(second.ok, false, 'two bridges would send every gesture to HA twice');
-  assert.equal(second.holder.pid, process.pid);
+  assert.equal(second.holder.pid, child.pid);
 
-  first.release();
+  await stop();
   assert.equal(acquireLock(dir).ok, true, 'released, so the next one may start');
+  await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('a lock naming our own pid is ours to take: the container restart case', async () => {
+  // In the app container node is pid 7 on every start. After a power cut the
+  // lock on /data named pid 7, the new bridge was pid 7, found it alive, and
+  // refused to start until someone deleted the file by hand.
+  const dir = await tmp();
+  writeLock(dir, { pid: process.pid });
+  assert.equal(acquireLock(dir).ok, true, 'the process holding pid 7 now is the new bridge itself');
+  await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('a lock from a previous boot is stale even if its pid is alive now', async () => {
+  const dir = await tmp();
+  writeLock(dir, { pid: process.ppid, boot: '00000000-0000-0000-0000-000000000000' });
+  assert.equal(acquireLock(dir).ok, true, 'pids restart from low numbers after every boot');
+  await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('a lock whose pid now belongs to a later process is stale', async () => {
+  const dir = await tmp();
+  // A live pid that is not us, recorded with a start time it does not have.
+  writeLock(dir, { pid: process.ppid, start: '1' });
+  assert.equal(acquireLock(dir).ok, true, 'the pid was reused by something that started later');
   await fsp.rm(dir, { recursive: true, force: true });
 });
 

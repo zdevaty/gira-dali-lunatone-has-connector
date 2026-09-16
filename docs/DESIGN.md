@@ -26,8 +26,9 @@ it, which is the more interesting list:
 | A knob held at its end stop flooded HA until it timed out, and a timed-out brightness read **disabled the ceiling check** | The bench never held a knob against a stop for seconds with a slow HA behind it |
 | The colour path had no end stops at all, re-sending the same kelvin ten times a second | Brightness grew its floor and ceiling during the 22:04 investigation; colour was never revisited |
 | `console: quiet` omitted `startup`, `gateway` and `inputEvent`, so a first run printed one line | Nobody had run it with the shipped defaults rather than the development ones |
+| After a power cut the app **refused to start at all**: the single-instance lock on `/data` named pid 7, and the new bridge -- also pid 7, as node always is behind Docker's init -- found that pid alive. Now the lock also records the kernel boot id and the process start time | The lock was written for a bare machine, where pids do not repeat across restarts. Its tests took the lock twice from one process, which proved nothing about a container |
 
-The pattern in three of the four: a guard that exists on one path and not its
+The pattern in four of the five: a guard that exists on one path and not its
 twin, or a piece of state that outlived the assumption it was true under.
 
 Four latent bugs named in section 4 were found in the bench build and fixed:
