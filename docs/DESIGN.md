@@ -11,7 +11,7 @@ started from.
 |---|---|
 | 1 — safety | **Done.** Buffered capture store with rotation, retention and a disk floor; monotonic clock; bounded command queue; bounded burst state; crash and signal handling; watchdog thread; single-instance lock; console and capture volume levels; gateway stall detection. |
 | 2 — deploy | **Done and running.** Installed as `local_dali_bridge` on the Pi, control enabled, one room mapped and behaving. |
-| 3 — web UI | **Mostly done.** Now, Commission, Devices, Gateway and Health ship in the sidebar panel. Captures and Tuning are not built. |
+| 3 — web UI | **Mostly done.** Now, Commission, Tuning, Devices, Gateway and Health ship in the sidebar panel. Captures is not built. |
 | 4 — setup features | **Partly.** Commissioning and the device map are in the UI, applied without a restart. The optional Home Assistant status sensors are built (`lib/ha-sensors.js`, `ha_sensors` option): state-machine entities written on a one-minute heartbeat and a few seconds after a gateway change or alert, never on a gesture. Discovery is not driveable from the page yet. |
 | 5 — cutover | **Done** in the sense that the Pi is the only bridge. **The chaos checklist below has not been run**, so "extremely reliable" remains a design claim rather than a tested property. |
 
@@ -400,10 +400,21 @@ Mobile-first, because you are standing in a room with a phone, not sitting at a
 desk. This replaces hand-editing `devices.json` for a job that is otherwise
 genuinely tedious and easy to get wrong.
 
-**Tuning** — the speed curve, ramp, flush window, divergence threshold, gains,
-minimum brightness. **Applied live, no restart**, because tuning how a knob
-*feels* is inherently iterative: turn, watch the log, adjust, turn again. A
-restart in that loop costs switch availability and breaks concentration.
+**Tuning** — *built 16 Sep 2026.* The speed curve, ramp, flush window,
+divergence threshold, gains, minimum brightness, queue length and staleness.
+**Applied live, no restart**, because tuning how a knob *feels* is inherently
+iterative: turn, watch the log, adjust, turn again. A restart in that loop
+costs switch availability and breaks concentration. So a feed of knob reports
+and the calls they became sits at the top of the page.
+
+`lib/tuning.js` layers defaults, then the environment (still honoured for a
+bench run), then `/config/tuning.json`, which holds only what the page changed
+-- a value equal to the layer below is not written, so a default is never
+frozen into the file. Validation is strict and in words; a bad key in the file
+is dropped and logged, the rest apply. One level of undo, reset per setting or
+all. The controller reads every value at use time (`setTuning`), so a save
+takes effect at the next report without disturbing a gesture in progress.
+Every change is a `tuning` line in the capture with before and after.
 
 **Devices** — *added 16 Sep 2026.* The gateway's own device list with status
 flags, name and group editing, and the two scans, with progress, cancel, and
@@ -543,7 +554,7 @@ reliability bug, not a convenience.
 |---|---|---|---|
 | Infrastructure (gateway host, log volume/retention, console level, control on/off) | app options → `/data/options.json` | HA app Config tab | yes (app restart) |
 | Device map (address → entity, kelvin range, gear) | `/data/devices.json` | **the UI** | no — hot reload |
-| Behaviour tuning (speed curve, flush, gains, thresholds) | `/data/tuning.json` | **the UI** | no — live apply |
+| Behaviour tuning (speed curve, flush, gains, thresholds) | `/config/tuning.json` | **the UI** | no — live apply |
 
 Tuning parameters are deliberately **not** app options: they belong to the
 thing that can change them live and show you the effect.

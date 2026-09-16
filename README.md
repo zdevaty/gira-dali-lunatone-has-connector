@@ -50,6 +50,7 @@ npm test   # 147 tests, all offline
 | `MIN_CORRELATIONS` | `3` | Consistent observations before a measured gear mapping is accepted. |
 | `LEVEL_DIVERGENCE` | `20` | How far HA's brightness may differ from the arc level on the bus before the bus is believed instead. |
 | `COLOUR_GAIN` | `1.0` | Multiplier on colour deltas. |
+| `TUNING_FILE` | next to `DEVICE_MAP` | Where the Tuning page saves. Its values override the tuning variables above, live. |
 | `CCT_BURST_MIN_SAMPLES` | `8` | Min samples before a narrow-range alert can fire. |
 | `CCT_SPAN_THRESHOLD` | `40` | Mired span below which a burst is "narrow". |
 | `LOG_FRAMES` | `all` | How much of the bus reaches the capture: `all`, `decoded` (no raw frames), `events` (only what the bridge did), `alerts`. |
@@ -507,6 +508,7 @@ lib/gateway-snapshot.js  setup copies, written on change, and their diff
 lib/gateway-watch.js  clock and firmware checks; markers when a gateway schedule is due
 lib/gateway-telemetry.js  diagnostics and sensor values, optional scheduled read, HA entities
 lib/zoned-time.js     wall time in a named time zone, and the gateway's date formats
+lib/tuning.js       tuning settings: validation, defaults < environment < tuning.json, undo
 lib/ha-sensors.js   optional status sensors published into Home Assistant
 lib/options.js      app / Supervisor runtime adapters
 config.yaml         app manifest -- the repo root IS the app directory

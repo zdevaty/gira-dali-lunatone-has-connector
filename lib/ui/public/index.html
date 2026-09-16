@@ -20,6 +20,7 @@
 <nav class="tabs" role="tablist">
   <button class="tab is-on" data-panel="now" role="tab">Now</button>
   <button class="tab" data-panel="commission" role="tab">Commission</button>
+  <button class="tab" data-panel="tuning" role="tab">Tuning</button>
   <button class="tab" data-panel="gateway" role="tab">Devices</button>
   <button class="tab" data-panel="hub" role="tab">Gateway</button>
   <button class="tab" data-panel="health" role="tab">Health</button>
@@ -73,6 +74,36 @@
     </details>
 
     <p class="hint" id="devices-file"></p>
+  </section>
+
+  <!-- ── Tuning ────────────────────────────────────────────────────────── -->
+  <section class="panel" id="panel-tuning">
+    <div class="lede">
+      <p><b>How the knobs feel.</b> Change a value, save, turn a knob. It applies
+      at the next turn, with no restart.</p>
+    </div>
+    <div id="tuning-banners"></div>
+
+    <div class="section tuning-feed-box">
+      <div class="section-head"><h2>Turn a knob</h2><span class="hint" id="tuning-feed-hint">what the knob said, and what was sent</span></div>
+      <div class="stream tuning-feed" id="tuning-feed"></div>
+    </div>
+
+    <form id="tuning-form" autocomplete="off"></form>
+
+    <div class="section">
+      <div class="dev-actions">
+        <button class="btn" id="tuning-undo" type="button">Undo last save</button>
+        <button class="btn" id="tuning-reset" type="button">Reset everything to defaults…</button>
+      </div>
+      <p class="hint" id="tuning-file"></p>
+    </div>
+
+    <div class="savebar" id="tuning-savebar" hidden>
+      <span id="tuning-dirty"></span>
+      <button class="btn btn-primary" id="tuning-save" type="button">Save and apply</button>
+      <button class="btn" id="tuning-discard" type="button">Discard</button>
+    </div>
   </section>
 
   <!-- ── Devices (the gateway's list, scans, names and groups) ─────────── -->
@@ -210,5 +241,6 @@
 
 <script src="app.js"></script>
 <script src="gateway.js"></script>
+<script src="tuning.js"></script>
 </body>
 </html>

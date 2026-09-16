@@ -1104,3 +1104,22 @@ test('a suppressed run is reported again after a real command', async () => {
     'a real command in between resets it, so the next stop is reported afresh',
   );
 });
+
+test('tuning applies live: the next report uses the new curve, without a restart', async () => {
+  const h = makeHarness({ brightness: 3 });
+  await h.feed([gen('start_right'), abs(100), abs(125), gen('stop')], 300);
+  await h.advance(500);
+  h.controller.setTuning({ speedCurve: [1, 10, 20, 30], brightnessGain: 2 });
+  await h.feed([gen('start_right'), abs(150), gen('stop')], 300);
+  await h.advance(500);
+  assert.deepEqual(brightnessCalls(h.calls).map((c) => c.brightness_step), [25, 20]);
+  assert.deepEqual(h.controller.getTuning().speedCurve, [1, 10, 20, 30]);
+});
+
+test('tuning refuses a key nothing reads, and hands out copies', () => {
+  const h = makeHarness();
+  assert.throws(() => h.controller.setTuning({ speedcurve: [1, 2, 3, 4] }), /unknown tuning key/);
+  const t = h.controller.getTuning();
+  t.speedCurve[0] = 999;
+  assert.equal(h.controller.getTuning().speedCurve[0], 2);
+});

@@ -295,3 +295,23 @@ table.scenes td { font-family: var(--mono); }
 .diff li { margin: .15rem 0; overflow-wrap: anywhere; }
 .diff .op-removed { color: var(--bad); }
 .diff .op-added { color: var(--ok); }
+
+/* ── Tuning ─────────────────────────────────────────────────────────────── */
+.tuning-feed { max-height: 11rem; min-height: 4rem; }
+.tune { padding: .55rem 0; border-top: 1px solid var(--line); }
+.section-head + .tune { border-top: 0; }
+.tune.dirty { background: var(--accent-soft); margin: 0 -.8rem; padding: .55rem .8rem; }
+.tune-head { display: flex; align-items: center; gap: .5rem; justify-content: space-between; }
+.tune-head label { font-weight: 500; font-size: .88rem; }
+.tune-inputs { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .35rem 0; }
+.tune-inputs input {
+  width: 5.5rem; font: inherit; font-family: var(--mono); font-size: .9rem; padding: .3rem .4rem;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+}
+.tune-inputs input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.tune-part { display: inline-flex; flex-direction: column; align-items: center; }
+.tune-part .hint { margin: 0; font-size: .7rem; }
+.tune-inputs .unit { color: var(--mute); font-size: .8rem; }
+.tune-foot { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+.tune-foot .hint { margin: 0; flex: 1; min-width: 12rem; }
+.linklike { appearance: none; background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: .78rem; cursor: pointer; text-decoration: underline; }

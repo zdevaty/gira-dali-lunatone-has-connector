@@ -507,3 +507,66 @@ test('the gateway page end to end: identify is marked as ours, a setup copy is k
 
   assert.equal(ha.calls.length, 0, 'no Home Assistant service was called');
 });
+
+test('a tuning save changes what the very next knob turn sends, with no restart', async (t) => {
+  const gw = createFakeGateway();
+  const ha = createFakeHa({ brightness: 128 });
+  const [gwPort, haPort] = [await gw.listen(), await ha.listen()];
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-e2e-'));
+  fs.writeFileSync(path.join(dir, 'devices.json'), JSON.stringify({
+    0: { entity: 'light.obyvak', min_kelvin: 2700, max_kelvin: 6500, gear: 'short0' },
+  }));
+  const child = spawn(process.execPath, ['index.js'], {
+    env: {
+      ...process.env,
+      GATEWAY_IP: `127.0.0.1:${gwPort}`,
+      LOG_DIR: dir,
+      DEVICE_MAP: path.join(dir, 'devices.json'),
+      HA_URL: `http://127.0.0.1:${haPort}`,
+      HA_TOKEN: 'test-token',
+      CONTROL_ENABLED: 'true',
+      UI_PORT: '0',
+      CONSOLE: 'off',
+      WATCHDOG: 'false',
+    },
+    stdio: 'ignore',
+  });
+  t.after(async () => {
+    if (child.exitCode === null) child.kill('SIGKILL');
+    await gw.close();
+    await ha.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  });
+
+  const ui = await waitFor(() => read(dir).find((e) => e.kind === 'ui' && e.status === 'listening'));
+  await waitFor(() => read(dir).some((e) => e.kind === 'connection' && e.status === 'connected'));
+  const hex = (s) => s.split(' ').map((b) => parseInt(b, 16));
+  const turn = async (frames) => {
+    gw.send(gw.monitor(24, hex('00 84 00')));
+    await new Promise((r) => setTimeout(r, 60));
+    for (const frame of frames) {
+      gw.send(gw.monitor(24, hex(frame)));
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    gw.send(gw.monitor(24, hex('00 84 02')));
+  };
+  const steps = () => ha.calls.filter((x) => x.brightness_step !== undefined).map((x) => x.brightness_step);
+
+  await turn(['00 8C 01', '00 8C 1A']); // baseline, then a 25-count report
+  await waitFor(() => steps().length >= 1);
+  assert.deepEqual(steps(), [25]);
+
+  const res = await fetch(`http://127.0.0.1:${ui.port}/api/tuning`, {
+    method: 'PUT', headers: { 'content-type': 'application/json', 'x-dali-ui': '1' },
+    body: JSON.stringify({ speedCurve: [2, 10, 55, 80] }),
+  });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).applied, true);
+
+  await turn(['00 8C 33']); // another 25-count report
+  await waitFor(() => steps().length >= 2);
+  assert.deepEqual(steps(), [25, 10]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'tuning.json'), 'utf8')), { speedCurve: [2, 10, 55, 80] });
+  const logged = await waitFor(() => read(dir).find((e) => e.kind === 'tuning' && e.action === 'saved'));
+  assert.deepEqual(logged.changed.speedCurve, { from: [2, 25, 55, 80], to: [2, 10, 55, 80] });
+});

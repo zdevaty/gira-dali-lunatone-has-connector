@@ -75,6 +75,8 @@ from your network.
 - **Commission** — the point of the panel. Walk the flat and turn each knob; the
   controller that just spoke jumps to the top and flashes. Give it the light it
   should drive and move on. Saving applies immediately, with no restart.
+- **Tuning** — how the knobs feel: step sizes, gains, the brightness floor,
+  timing. Applied at the next turn, no restart.
 - **Devices** — the gateway's device list: scan for new devices, names, groups,
   blink, scenes, diagnostics, and DALI-2 sensors.
 - **Gateway** — bus power, the gateway's clock, polling, what it runs by itself,
@@ -171,6 +173,8 @@ app: refusing to start would disable every knob in the building instead of one.
 | `driver_reports_failure` | A diagnostics read found a fault flag set (open circuit, thermal shutdown…) |
 | `identify_restore_failed` | A blink could not put the light back; set it from Home Assistant |
 | `gateway_automation` | Not an alert: a schedule stored on the gateway was due. It acts without this app |
+| `tuning` | Not an alert: a tuning setting changed, with its old and new value |
+| `tuning_problem` | A tuning value in `tuning.json` or the environment was invalid and ignored; the default is used |
 
 ## Adding devices
 
@@ -217,6 +221,30 @@ Anything raised during a scan and for ten seconds after carries
 Every request the app makes of the gateway is written to the capture as a
 `gateway_write` line, whatever **How much of the bus to capture** is set to.
 To make the page read-only, switch off **Device management from the panel**.
+
+## Tuning how the knobs feel
+
+Open **Tuning**, change a value, press **Save and apply**, and turn a knob. The
+feed at the top shows the knob's button and turn events and exactly what was
+sent to Home Assistant, so you can see the effect of a change as well as feel it.
+
+| Setting | Turn it… |
+|---|---|
+| **Step per speed** | The four numbers are how far one report moves the light at each rotation speed, slowest first. Raise *slowest* if a gentle turn does nothing visible; lower *fastest* if a quick spin overshoots. |
+| **Speed up at an end stop every** | Once the knob's counter hits its end it stops reporting speed; lower this to accelerate sooner while you keep turning. |
+| **Brightness gain**, **Colour gain** | Scales everything at once. Below 1 is finer. |
+| **Lowest brightness** | Where turning down stops. Never below 2: on this hardware 1 switches the light off. |
+| **Trust the bus beyond** | How far Home Assistant's brightness may disagree with the level on the bus before the bus wins. |
+| **At most one call every** | Lower feels more immediate and puts more load on Home Assistant. |
+| **Calls waiting per light**, **Drop a call older than** | What happens when Home Assistant is slow: late steps are dropped rather than applied after your hand has left the knob. |
+
+**Undo last save** goes back one step; **back to default** under a setting
+resets just that one. Saved settings live in
+`/addon_configs/local_dali_bridge/tuning.json`, which holds only what you
+changed. Every change is written to the capture with its old and new value.
+
+With **Control the lights** off, changes are saved but nothing uses them until
+it is on.
 
 ## On a device's card: blink, scenes, diagnostics
 

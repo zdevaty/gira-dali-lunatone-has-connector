@@ -13,6 +13,7 @@ import { createGatewayConfig } from './lib/gateway-config.js';
 import { createGatewaySnapshots } from './lib/gateway-snapshot.js';
 import { createGatewayWatch } from './lib/gateway-watch.js';
 import { createGatewayTelemetry } from './lib/gateway-telemetry.js';
+import { createTuningStore } from './lib/tuning.js';
 import { createController } from './lib/control.js';
 import { createGearDiscovery } from './lib/discover.js';
 import { monotonicNow, createClockWatch } from './lib/clock.js';
@@ -98,10 +99,9 @@ function loadConfig() {
     deviceMapPath,
     haUrl: process.env.HA_URL || 'http://localhost:8123',
     haToken: process.env.HA_TOKEN,
-    flushMs: Number(process.env.FLUSH_MS) || 200,
+    // Fatal here, before anything starts: a mistyped curve in the environment
+    // is a configuration error. The value itself is read by lib/tuning.js.
     speedCurve: loadSpeedCurve(process.env.SPEED_CURVE),
-    rampEveryReports: Number(process.env.RAMP_EVERY_REPORTS) || 2,
-    levelDivergence: Number(process.env.LEVEL_DIVERGENCE ?? 20),
     // Opt-in: it creates entities in someone's Home Assistant.
     haSensors: ['true', '1', 'yes'].includes(String(process.env.HA_SENSORS ?? '').toLowerCase()),
     haSensorsMs: Number(process.env.HA_SENSORS_MS ?? 60_000),
@@ -116,13 +116,11 @@ function loadConfig() {
     diagnosticsIntervalHours: Math.max(0, Number(process.env.DIAGNOSTICS_INTERVAL_HOURS ?? 0) || 0),
     gatewaySnapshots: !['false', '0', 'no'].includes(String(process.env.GATEWAY_SNAPSHOTS ?? 'true').toLowerCase()),
     snapshotDir: process.env.SNAPSHOT_DIR || null,
+    tuningFile: process.env.TUNING_FILE || null,
     snapshotStartMs: Number(process.env.SNAPSHOT_START_MS ?? 120_000),
     gatewayWatch: !['false', '0', 'no'].includes(String(process.env.GATEWAY_WATCH ?? 'true').toLowerCase()),
     gatewayWatchStartMs: Number(process.env.GATEWAY_WATCH_START_MS ?? 20_000),
     discoverGear: ['true', '1', 'yes'].includes(String(process.env.DISCOVER_GEAR ?? '').toLowerCase()),
-    brightnessGain: Number(process.env.BRIGHTNESS_GAIN) || 1,
-    colourGain: Number(process.env.COLOUR_GAIN) || 1,
-    minBrightness: Number(process.env.MIN_BRIGHTNESS ?? 3),
     logFrames: loadChoice('LOG_FRAMES', ['all', 'decoded', 'events', 'alerts'], 'all'),
     consoleLevel: loadChoice('CONSOLE', ['pretty', 'quiet', 'off'], 'pretty'),
     logRetentionDays: Number(process.env.LOG_RETENTION_DAYS ?? 30),
@@ -279,6 +277,12 @@ function formatConsoleLine(event) {
     }
     case 'gateway':
       return `${time}  gw     ${event.name} ${event.version} (${event.lines} line${event.lines === 1 ? '' : 's'}, tier ${event.tier})`;
+    case 'tuning': {
+      const detail = event.changed
+        ? Object.entries(event.changed).map(([k, v]) => `${k} ${JSON.stringify(v.from)} → ${JSON.stringify(v.to)}`).join(', ')
+        : `${Object.keys(event.settings ?? {}).length} setting(s) from ${event.file}`;
+      return `${time}  tune   ${event.action}: ${detail}`;
+    }
     case 'gateway_snapshot':
       return `${time}  gw     snapshot (${event.reason}): ${event.changed ? `${event.changes ?? 'first'} change(s), ${event.file}` : 'no changes'}${event.first?.length ? `\n          ${event.first.join('\n          ')}` : ''}`;
     case 'gateway_automation':
@@ -368,6 +372,15 @@ function main() {
       })
     : null;
   const loadedDevices = deviceStore ? deviceStore.load() : { map: {}, problems: [] };
+
+  // How the knobs feel: defaults, then the environment, then what the Tuning
+  // page saved. Applied to the controller live on every save.
+  const tuningStore = createTuningStore({
+    file: config.tuningFile
+      ?? (config.deviceMapPath ? path.join(path.dirname(config.deviceMapPath), 'tuning.json') : path.join(config.logDir, 'tuning.json')),
+    log: (event) => emit(event),
+    onChange: (values) => controller?.setTuning(values),
+  });
 
   const decoder = createDecoder();
   const anomaly = createAnomalyDetector({
@@ -508,18 +521,13 @@ function main() {
     ? createHaClient({ url: config.haUrl, token: config.haToken, log: emit })
     : null;
 
+  const tuning = tuningStore.load();
   const controller = config.controlEnabled
     ? createController({
         deviceMap: { ...loadedDevices.map },
         ha,
         log: emit,
-        flushMs: config.flushMs,
-        speedCurve: config.speedCurve,
-        rampEveryReports: config.rampEveryReports,
-        levelDivergence: config.levelDivergence,
-        brightnessGain: config.brightnessGain,
-        colourGain: config.colourGain,
-        minBrightness: config.minBrightness,
+        ...tuning,
         // Every window and throttle in the gesture machine is measured against
         // this. It must not be the wall clock: this daemon is meant to run on a
         // Raspberry Pi, which has no RTC and gets its clock stepped by NTP a few
@@ -813,6 +821,8 @@ function main() {
       store,
       ha,
       devices: deviceStore,
+      tuning: tuningStore,
+      tuningApplied: Boolean(controller),
       gateway: gatewayAdmin,
       gatewayWrites: config.deviceManagement,
       gatewayServices: {

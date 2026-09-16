@@ -10,7 +10,7 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.7.1"
+version: "0.8.0"
 slug: dali_bridge
 description: >-
   DALI bus monitor, Gira rotary bridge and device manager for a Lunatone
@@ -60,6 +60,8 @@ environment:
   # Copies of the gateway's setup, kept whenever it changes. In /config so the
   # Terminal and Samba apps can read them and backups include them.
   SNAPSHOT_DIR: /config/gateway-snapshots
+  # How the knobs feel, written by the Tuning page and applied live.
+  TUNING_FILE: /config/tuning.json
   # Bounded on purpose: if this leaks it should die and be restarted, not swap
   # the Pi until Home Assistant suffers with it.
   NODE_OPTIONS: "--max-old-space-size=128"

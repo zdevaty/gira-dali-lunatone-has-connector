@@ -452,3 +452,32 @@ test('gateway page writes need the guard header and reach the right module', asy
   ]);
   await h.cleanup();
 });
+
+// ── Tuning ──────────────────────────────────────────────────────────────────
+
+test('the tuning page reads, saves through validation, undoes and resets', async () => {
+  const { createTuningStore } = await import('../lib/tuning.js');
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'dali-tune-ui-'));
+  const applied = [];
+  const tuning = createTuningStore({ file: path.join(dir, 'tuning.json'), env: {}, onChange: (v) => applied.push(v) });
+  tuning.load();
+  const h = await harness({ tuning, tuningApplied: true });
+
+  const first = await (await h.get('/api/tuning')).json();
+  assert.equal(first.applied, true);
+  assert.equal(first.fields[0].key, 'speedCurve');
+
+  assert.equal((await h.get('/api/tuning', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{"colourGain":2}' })).status, 403, 'guard header');
+  const bad = await h.get('/api/tuning', guarded('PUT', { colourGain: 99 }));
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).problems[0], /between 0.1 and 5/);
+
+  const ok = await (await h.get('/api/tuning', guarded('PUT', { colourGain: 2 }))).json();
+  assert.deepEqual(ok.changed, ['colourGain']);
+  assert.equal(applied.at(-1).colourGain, 2);
+  assert.equal((await h.get('/api/tuning/undo', guarded('POST'))).status, 200);
+  assert.equal(applied.at(-1).colourGain, 1);
+  assert.equal((await h.get('/api/tuning/reset', guarded('POST', {}))).status, 200);
+  await h.cleanup();
+  await fsp.rm(dir, { recursive: true, force: true });
+});
