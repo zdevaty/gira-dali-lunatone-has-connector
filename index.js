@@ -173,6 +173,12 @@ function targetAbbrev(target) {
   return target;
 }
 
+// Only what is set, so "ok" is short and a failure stands out.
+function describeStatus(status) {
+  const set = Object.entries(status).filter(([, on]) => on).map(([name]) => name);
+  return set.length ? set.join(', ') : 'ok, lamp off';
+}
+
 function formatConsoleLine(event) {
   const time = new Date(event.ts).toTimeString().slice(0, 8);
   const label = targetAbbrev(event.target);
@@ -223,9 +229,15 @@ function formatConsoleLine(event) {
           : event.value != null ? `${event.value}` : '';
         return `${time}  ${''.padEnd(6)} special ${event.command}${operands ? ` ${operands}` : ''}`;
       }
+      if (event.scope === 'gear') return `${time}  ${label.padEnd(6)} ${event.command}`;
       return `${time}  ${label.padEnd(6)} cmd inst=${event.instance} op=${event.opcode} (${event.category})`;
     }
     case 'response': {
+      if (event.to.query) {
+        const who = targetAbbrev(event.to.target);
+        if (event.status) return `${time}  reply  ${who} status ${describeStatus(event.status)}`;
+        if (event.to.query === 'query_actual_level') return `${time}  reply  ${who} level ${event.level ?? 'unknown (MASK)'}`;
+      }
       const what = event.to.special ? event.to.special : `inst=${event.to.instance} op=${event.to.opcode}`;
       return `${time}  reply  ${event.value} → ${what}`;
     }
@@ -519,10 +531,11 @@ function main() {
     // so the pairing window is measured against what the log actually shows.
     const tsMs = Date.now();
     const decoded = decoder.decodeFrame(bits, bytes, tsMs);
-    // A scan is thousands of queries and addressing commands, TERMINATE among
-    // them, which the decoder rightly reads as dali_reset. Still logged, but
-    // marked -- before it is emitted, or the capture never sees the mark -- so
-    // neither a person nor an automation mistakes our own scan for a fault.
+    // A scan is thousands of queries and addressing commands, and the gear
+    // blinks and changes level while it runs. Anything alarming that comes of
+    // it is still logged, but marked -- before it is emitted, or the capture
+    // never sees the mark -- so neither a person nor an automation mistakes our
+    // own scan for a fault.
     const scanning = gatewayAdmin?.scanning() ?? false;
     if (scanning && decoded.kind === 'alert') decoded.during_scan = true;
     const event = emit(decoded, tsMs);

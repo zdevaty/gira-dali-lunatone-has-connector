@@ -336,3 +336,97 @@ test('unrecognized bit length decodes to unknown', () => {
   assert.equal(event.kind, 'unknown');
   assert.equal(event.bits, 32);
 });
+
+// ── 16-bit gear queries (the gateway's status polling, seen 16 Sep 2026) ──────
+
+test('the gateway polls drivers with query_status and query_actual_level, and the answers pair', () => {
+  // The exact sequence from the live panel: A0, A1, A2, each asked both.
+  const d = createDecoder();
+  let t = 1_000;
+  const seen = [];
+  for (const b0 of ['01', '03', '05']) {
+    for (const op of ['90', 'A0']) {
+      seen.push(d.decodeFrame(16, hex(`${b0} ${op}`), t));
+      seen.push(d.decodeFrame(8, hex('04'), t + 20));
+      t += 500;
+    }
+  }
+  assert.deepEqual(seen.filter((e) => e.kind === 'command').map((e) => `${e.target} ${e.command}`), [
+    'short0 query_status', 'short0 query_actual_level',
+    'short1 query_status', 'short1 query_actual_level',
+    'short2 query_status', 'short2 query_actual_level',
+  ]);
+  assert.equal(seen.filter((e) => e.kind === 'orphan_response').length, 0, 'no orphans left');
+  const answer = seen[1];
+  assert.equal(answer.kind, 'response');
+  assert.deepEqual(answer.to, { space: 'gear', target: 'short0', address: 0, query: 'query_status', opcode: '0x90' });
+});
+
+test('a status answer is split into the same flags the gateway badge uses, bit 0 first', () => {
+  const d = createDecoder();
+  d.decodeFrame(16, hex('03 90'), 0);
+  // 0x06 = bits 1 and 2: lamp failure, lamp on.
+  const r = d.decodeFrame(8, hex('06'), 10);
+  assert.deepEqual(r.status, {
+    control_gear_failure: false,
+    lamp_failure: true,
+    lamp_on: true,
+    limit_error: false,
+    fade_running: false,
+    reset_state: false,
+    short_address_missing: false,
+    power_cycle_seen: false,
+  });
+  d.decodeFrame(16, hex('03 90'), 100);
+  assert.equal(d.decodeFrame(8, hex('80'), 110).status.power_cycle_seen, true);
+});
+
+test('an actual level answer of 255 is MASK, not full brightness', () => {
+  const d = createDecoder();
+  d.decodeFrame(16, hex('01 A0'), 0);
+  assert.equal(d.decodeFrame(8, hex('FE'), 10).level, 254);
+  d.decodeFrame(16, hex('01 A0'), 100);
+  const mask = d.decodeFrame(8, hex('FF'), 110);
+  assert.equal(mask.level, null);
+  assert.equal(mask.value, 255, 'the raw value is kept');
+});
+
+test('a group or broadcast query is named but never paired: several drivers answer at once', () => {
+  const d = createDecoder();
+  const q = d.decodeFrame(16, hex('81 90'), 0);
+  assert.equal(q.command, 'query_status');
+  assert.equal(q.target, 'group0');
+  assert.equal(d.decodeFrame(8, hex('04'), 10).kind, 'orphan_response');
+  d.decodeFrame(16, hex('FF A0'), 100);
+  assert.equal(d.decodeFrame(8, hex('04'), 110).kind, 'orphan_response');
+});
+
+test('other gear commands keep no invented name', () => {
+  const d = createDecoder();
+  for (const op of ['91', '98', 'A1', 'E2']) {
+    const e = d.decodeFrame(16, hex(`01 ${op}`), 0);
+    assert.equal(e.kind, 'raw', op);
+    assert.equal(e.command, undefined, op);
+  }
+});
+
+test('an answer belongs only to the forward frame directly before it', () => {
+  const d = createDecoder();
+  d.decodeFrame(16, hex('01 90'), 0);
+  d.decodeFrame(16, hex('01 E2'), 10); // not a query we name; the question went unanswered
+  assert.equal(d.decodeFrame(8, hex('04'), 20).kind, 'orphan_response');
+  d.decodeFrame(16, hex('01 90'), 100);
+  d.decodeFrame(16, hex('00 80'), 110); // a level frame in between
+  assert.equal(d.decodeFrame(8, hex('04'), 120).kind, 'orphan_response');
+});
+
+test('A1 00 is TERMINATE, a command, and not an alert', () => {
+  // Decoded as dali_reset until 16 Sep 2026. All five in the 25 Aug capture sat
+  // inside DALI Cockpit work, and every scan ends with one.
+  const d = createDecoder();
+  const e = d.decodeFrame(16, hex('A1 00'), 0);
+  assert.equal(e.kind, 'command');
+  assert.equal(e.scope, 'special');
+  assert.equal(e.command, 'terminate');
+  assert.equal(e.alert, undefined);
+});

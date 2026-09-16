@@ -192,7 +192,8 @@ On a device's card:
 - **Groups** are stored *in the device*, so saving them writes to the bus and
   asks once more. Lights answer group commands by these.
 
-A scan's own traffic looks alarming in the log -- `dali_reset` among others.
+A scan's own traffic can look alarming in the log -- lights blinking reads like
+the knob calibration confirmation, for instance.
 Anything raised during a scan and for ten seconds after carries
 `during_scan=true`, and the status sensors ignore it.
 
@@ -240,6 +241,26 @@ actions:
 
 and for the gateway, a state trigger on `binary_sensor.dali_bridge_gateway`
 going `off` for two minutes.
+
+## The gateway polls your drivers
+
+Once devices are in the gateway's list, the gateway asks each driver about once
+a second for its status and its level. In **Now** that reads:
+
+```
+A0  query status
+    reply A0 status: lamp on
+A0  query actual level
+    reply A0 level 254
+```
+
+That traffic is the gateway's, not the app's, and it is what the **lamp
+failure** and **on** badges on the Devices page are built from -- the same bits,
+decoded the same way. A level of `unknown (MASK)` is the driver saying it cannot
+tell, which is what a failed or missing lamp answers.
+
+It adds a few frames a second to the capture. If that is too much for the SD
+card, set **How much of the bus to capture** to `events`.
 
 ## Captures
 

@@ -375,7 +375,6 @@ Console output is one line per event, meant for `journalctl -f`:
 | --- | --- |
 | `narrow_cct_range` | A burst of ≥8 colour events spanning <40 mired — the controller's colour range has probably been narrowed by an accidental recalibration. This is the bug the tool exists to catch. |
 | `calibration_saved` | Three quick off/on cycles, the documented Gira confirmation for saving a limit. **Unverified** — see below. |
-| `dali_reset` | A RESET frame. Means a device lost its configuration. |
 | `button_stuck` | A knob is jammed (furniture). Logged only, never acted on. |
 | `unmapped_device` | An event from an address missing from `devices.json`. Logged once per address. |
 | `gear_discovery_aborted` | Someone used a controller during `DISCOVER_GEAR`. Probed lights were restored; re-run when the bus is idle. |
@@ -457,15 +456,17 @@ Replaying it through the decoder drove the changes below and turned up several t
 
 ## Unverified assumptions
 
-Two byte patterns are taken from the DALI standard rather than measured on this hardware.
-Both fail safe — a wrong guess means the event decodes as `unknown` with its raw bytes in
-the log and no alert, never a crash or a bus write.
+One byte pattern is taken from the DALI standard rather than measured on this hardware. It
+fails safe — a wrong guess means the event decodes as `unknown` with its raw bytes in the log
+and no alert, never a crash or a bus write.
 
-1. **`dali_reset` = `A1 00`.** Five of these appeared in the capture between 19:19 and 19:33,
-   which is consistent with the controllers being reconfigured in DALI Cockpit around then —
-   suggestive, but not proof the byte pattern is right. Confirm by triggering a reset on a
-   spare device and checking whether the alert fires.
-2. **`button_stuck` = push-button opcode `0x08`.** Gira's other opcodes (`09`/`0B`/`0C`)
+*Resolved 16 Sep 2026:* `A1 00` used to raise a `dali_reset` alert, on assumption. It is the
+standard special command **TERMINATE**, which ends every addressing session and resets
+nothing; the five in the 25 Aug capture sat inside DALI Cockpit work, and every gateway scan
+ends with one. It is now logged as `command terminate`. RESET is an addressed command, and
+no alert exists for it until one is seen on this bus.
+
+1. **`button_stuck` = push-button opcode `0x08`.** Gira's other opcodes (`09`/`0B`/`0C`)
    don't follow the standard numbering, so this one is a guess, and `0x08` never appeared in
    the capture. Confirm by wedging a button down for more than 20 seconds. Two other
    push-button opcodes did show up unmapped, `0x0E` and `0x0F` (once each) — if the stuck

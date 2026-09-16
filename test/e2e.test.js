@@ -399,7 +399,10 @@ test('a scan from the panel: exact body to the gateway, our own traffic marked, 
   const started = await post('/api/gateway/scan', { mode: 'extend' });
   assert.equal(started.status, 200);
 
-  // TERMINATE is on the wire during every scan, and decodes as dali_reset.
+  // Gear blinking during a scan looks exactly like the Gira calibration
+  // confirmation: three off/on cycles on one address inside five seconds.
+  for (const level of [100, 0, 100, 0, 100, 0, 100]) gw.send(gw.monitor(16, [0x00, level]));
+  // And every scan ends with TERMINATE.
   gw.send(gw.monitor(16, [0xa1, 0x00]));
 
   const last = await (async () => {
@@ -422,9 +425,11 @@ test('a scan from the panel: exact body to the gateway, our own traffic marked, 
   assert.deepEqual(last.after.missing_entities, []);
 
   const events = read(dir);
-  const reset = events.find((e) => e.kind === 'alert' && e.alert === 'dali_reset');
-  assert.ok(reset, 'still logged');
-  assert.equal(reset.during_scan, true, 'but marked as our own scan');
+  const blink = events.find((e) => e.kind === 'alert' && e.alert === 'calibration_saved');
+  assert.ok(blink, 'still logged');
+  assert.equal(blink.during_scan, true, 'but marked as our own scan');
+  assert.ok(events.some((e) => e.kind === 'command' && e.command === 'terminate'), 'TERMINATE is a command, not an alert');
+  assert.ok(!events.some((e) => e.alert === 'dali_reset'));
   assert.deepEqual(events.filter((e) => e.kind === 'gateway_write').map((e) => e.action), ['scan_start', 'scan_finished']);
   assert.equal(ha.calls.length, 0, 'no light was touched');
 });

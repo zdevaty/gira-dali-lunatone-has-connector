@@ -10,7 +10,7 @@
 # every few seconds forever. They are switched on in the same commit as the UI.
 
 name: DALI Bridge
-version: "0.6.0"
+version: "0.6.1"
 slug: dali_bridge
 description: >-
   DALI bus monitor, Gira rotary bridge and device manager for a Lunatone
