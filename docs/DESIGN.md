@@ -777,8 +777,10 @@ would otherwise be diagnosed as haunted hardware.
      whether `POST /datetime` accepts it in return, and whether a single-digit
      day is padded, is still to be seen. Anything unrecognised raises
      `gateway_clock_unreadable` once, and the clock cannot be set from the panel.
-   - Whether **`/info` carries `lines`** with `lineStatus`. If not, bus power
-     stays "not reported" and `binary_sensor.dali_bridge_bus_power` stays
+   - ~~Whether **`/info` carries `lines`** with `lineStatus`.~~ **Answered on
+     the Pi, 16 Sep: yes** -- the Gateway page showed line 0 "powered". A
+     `noPower` has still never been seen for real. Without `lines`, bus power
+     would stay "not reported" and `binary_sensor.dali_bridge_bus_power`
      `unavailable` -- never `on` by default.
    - What **Home Assistant device identifiers** the Lunatone integration uses.
      Zone mirroring matches by the knob map first and a unique exact name last;
