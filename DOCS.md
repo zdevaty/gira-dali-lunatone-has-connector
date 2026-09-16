@@ -101,7 +101,7 @@ independently, so a knob at A0 says nothing about which driver its light uses.
    On `quiet` you still see the knob turns, but not the arc levels and colour
    frames underneath them.
 
-3. Write `/data/devices.json` (see below) using the addresses you just collected,
+3. Map the knobs on the **Commission** page, or write `devices.json` (see below), using the addresses you just collected,
    then switch **Control the lights** on. From then on an unmapped knob reports
    `unmapped_device` once per address.
 
